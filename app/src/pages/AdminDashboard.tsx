@@ -53,7 +53,10 @@ export function AdminDashboard() {
 
   // --- BULLETPROOF DATA FETCHING ---
   useEffect(() => {
+    let mounted = true;
+    
     const unsubBookings = onSnapshot(collection(db, 'bookings'), (snapshot) => {
+      if (!mounted) return;
       let revenue = 0;
       let active = 0;
       const bks: any[] = [];
@@ -66,18 +69,27 @@ export function AdminDashboard() {
       setBookings(bks);
       setStats(prev => ({ ...prev, totalBookings: snapshot.size, totalRevenue: revenue, activeGuests: active }));
     }, (error) => {
+      if (!mounted) return;
       console.warn("Firebase blocked bookings listener:", error.message);
     });
 
-    const unsubRooms = onSnapshot(collection(db, 'rooms'), () => {
-      setStats(prev => ({ ...prev, availableRooms: 200 - prev.activeGuests }));
+    const unsubRooms = onSnapshot(collection(db, 'rooms'), (snapshot) => {
+      if (!mounted) return;
+      let availableCount = 0;
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.isAvailable) availableCount++;
+      });
+      setStats(prev => ({ ...prev, availableRooms: availableCount }));
     }, (error) => {
+      if (!mounted) return;
       console.warn("Firebase blocked rooms listener:", error.message);
     });
 
     return () => { 
-      if(unsubBookings) unsubBookings(); 
-      if(unsubRooms) unsubRooms(); 
+      mounted = false;
+      if (unsubBookings) unsubBookings(); 
+      if (unsubRooms) unsubRooms(); 
     };
   }, []);
 

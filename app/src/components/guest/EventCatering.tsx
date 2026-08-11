@@ -4,7 +4,8 @@ import {
   ChevronLeft, Users, Image as ImageIcon, 
   Info, X, XCircle, CheckCircle, AlertCircle, Loader2
 } from 'lucide-react';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
+import { awardLoyaltyPoints } from '@/services/firebase-services';
 import { doc, updateDoc } from 'firebase/firestore';
 import './EventCatering.css';
 
@@ -215,6 +216,18 @@ export default function EventCateringWeb() {
         cateringTotal: total,
         cateringItems: savedCateringItems
       });
+
+      // Award loyalty points for the catering spend (1 point per R10)
+      const pts = Math.floor(total / 10);
+      if (pts > 0) {
+        const currentUser = auth.currentUser;
+        awardLoyaltyPoints(
+          currentUser?.uid || '',
+          currentUser?.email || '',
+          pts,
+          `Event Catering: ${total >= 5000 ? 'Wedding & Premium' : 'Catering'} package`
+        );
+      }
 
       window.alert("Success! Your catering package has been added to your event booking.");
       navigate('/');

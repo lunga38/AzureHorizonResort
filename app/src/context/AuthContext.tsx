@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { User as CustomUser, UserRole } from '@/types';
 import { listenForAuthChanges, db, logoutUser } from '@/services/firebase-services';
 import { doc, getDoc } from 'firebase/firestore';
@@ -22,14 +22,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Firebase signOut error:', e);
     }
   }, []);
+  // LIVE ref so the auth listener NEVER needs to re-subscribe when user changes.
+  // Re-subscribing on [user] caused an infinite loop: every setUser() produced a new
+  // object -> effect re-ran -> onAuthStateChanged fired instantly -> setUser() again.
+  // That loop saturated the main thread and froze the page on any button press.
+  const userRef = useRef<CustomUser | null>(null);
+
+  // Keep the ref in sync AFTER each render (refs must not be written during render)
   useEffect(() => {
+    userRef.current = user;
+  });
+
+  // Shallow equality helper: prevents setUser(newObject) when content is unchanged,
+  // which is what kept re-triggering the effect loop.
+  const isSameUser = (a: CustomUser | null, b: CustomUser | null): boolean => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return a.uid === b.uid && a.id === b.id && a.email === b.email && a.role === b.role;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveAndSetUser = (foundUser: CustomUser | null) => {
+      if (cancelled) return;
+      const current = userRef.current;
+
+      if (foundUser && foundUser.role) {
+        // Only set if content actually differs (new object reference alone must NOT trigger a re-render loop)
+        if (!isSameUser(current, foundUser)) {
+          setUser(foundUser);
+          localStorage.setItem('fixedFundingUser', JSON.stringify(foundUser));
+        }
+      } else {
+        // Visitor fallback: build ONE stable object per auth uid so it never loops.
+        // If we already have a valid user (manual login/bypass), keep it untouched.
+        if (!current || !current.role) {
+          const fallback: CustomUser = {
+            uid: foundUser?.uid || '',
+            id: foundUser?.id || '',
+            name: foundUser?.name || 'User',
+            role: null,
+            status: 'visitor',
+          };
+          if (!isSameUser(current, fallback)) {
+            setUser(fallback);
+          }
+        }
+      }
+      setIsLoading(false);
+    };
+
     const unsubscribe = listenForAuthChanges(async (firebaseUser) => {
+      if (cancelled) return;
+
       if (firebaseUser) {
         let foundUser: CustomUser | null = null;
-        
+        const current = userRef.current;
+
         // 1. Check current state first (prevents unnecessary overwrites)
-        if (user && (user.uid === firebaseUser.uid || user.id === firebaseUser.uid)) {
-          if (user.role) {
+        if (current && (current.uid === firebaseUser.uid || current.id === firebaseUser.uid)) {
+          if (current.role) {
             setIsLoading(false);
             return; // Already have a valid user with a role
           }
@@ -55,48 +108,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const cleanEmail = firebaseUser.email.toLowerCase();
               const userDoc = await getDoc(doc(db, 'users', cleanEmail));
               if (userDoc.exists()) {
-                foundUser = { id: firebaseUser.uid, ...userDoc.data() } as CustomUser;
+                foundUser = { uid: firebaseUser.uid, id: firebaseUser.uid, ...userDoc.data() } as CustomUser;
               }
             }
-            
+
             if (!foundUser || !foundUser.role) {
               const guestDoc = await getDoc(doc(db, 'guests', firebaseUser.uid));
               if (guestDoc.exists()) {
-                foundUser = { id: firebaseUser.uid, ...guestDoc.data() } as CustomUser;
+                foundUser = { uid: firebaseUser.uid, id: firebaseUser.uid, ...guestDoc.data() } as CustomUser;
               }
             }
           }
-        } catch (err: any) {
-          if (err.code === 'permission-denied') {
+        } catch (err: unknown) {
+          const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : undefined;
+          if (code === 'permission-denied') {
             console.error("🔥 Firestore Permission Denied: Check your Security Rules!", err);
           } else {
             console.error("Error fetching user data from Firestore:", err);
           }
-        } finally {
-          if (foundUser && foundUser.role) {
-            setUser(foundUser);
-            localStorage.setItem('fixedFundingUser', JSON.stringify(foundUser));
-          } else {
-            // If we have a Firebase user but no Firestore profile, don't clear the user
-            // if we already have one (e.g. from a manual login/bypass)
-            if (!user || !user.role) {
-              console.warn("No Firestore profile found for authenticated user:", firebaseUser.email);
-              setUser({
-                uid: firebaseUser.uid,
-                id: firebaseUser.uid,
-                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-                role: null, // Still null, but we'll handle this in App.tsx
-                status: 'visitor'
-              } as CustomUser);
-            }
-          }
-          setIsLoading(false);
+        }
+
+        if (foundUser && foundUser.role) {
+          resolveAndSetUser(foundUser);
+        } else {
+          // No Firestore profile: use a stable fallback carrying the real auth UID
+          resolveAndSetUser({
+            uid: firebaseUser.uid,
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+            role: null,
+            status: 'visitor',
+          } as CustomUser);
         }
       } else {
         // Only clear if we aren't using a "demo/bypass" user (staff accounts often use master password)
-        if (user && (user.status === 'staff' || user.id === 'bandile_maqeda' || user.uid === 'bandile_maqeda')) {
+        const current = userRef.current;
+        if (current && (current.status === 'staff' || current.id === 'bandile_maqeda' || current.uid === 'bandile_maqeda')) {
            // Keep the staff user even if Firebase Auth session is missing (for demo purposes)
-        } else {
+        } else if (!isSameUser(current, null)) {
           setUser(null);
           localStorage.removeItem('fixedFundingUser');
         }
@@ -104,8 +153,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return unsubscribe;
-  }, [user]); // Add user to dependency to allow checking current state
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []); // Subscribe exactly ONCE. No [user] dependency = no resubscribe loop.
 
   const hasRole = useCallback((roles: UserRole[]): boolean => {
     if (!user) return false;

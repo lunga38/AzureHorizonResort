@@ -17,11 +17,31 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
+if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
+  throw new Error(
+    "Firebase is not configured. Create an app/.env file with VITE_FIREBASE_API_KEY, " +
+    "VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_DATABASE_URL, " +
+    "VITE_FIREBASE_STORAGE_BUCKET, VITE_FIREBASE_MESSAGING_SENDER_ID, VITE_FIREBASE_APP_ID, " +
+    "and VITE_FIREBASE_MEASUREMENT_ID."
+  );
+}
+
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
 // Exported services for use in your components and services
-export const analytics = getAnalytics(app);
+// Analytics is lazy + guarded: it throws at module load when config is missing/incomplete,
+// which white-screened the whole app. Missing analytics must never block the app.
+export const analytics = getAnalyticsSafely();
+function getAnalyticsSafely() {
+  try {
+    return getAnalytics(app);
+  } catch (e) {
+    console.warn("Firebase Analytics disabled:", (e as Error).message);
+    return null;
+  }
+}
+
 export const auth = getAuth(app);
 
 // 🚨 THE FIX: Explicitly force Firestore to run strictly in memory. 

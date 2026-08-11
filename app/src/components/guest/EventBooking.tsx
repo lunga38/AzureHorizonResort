@@ -5,7 +5,7 @@ import {
   Building, XCircle, FileText, AlertCircle 
 } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
-import { fetchBlockedSlotsWithBuffer } from '@/services/firebase-services';
+import { fetchBlockedSlotsWithBuffer, awardLoyaltyPoints } from '@/services/firebase-services';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import './EventBooking.css';
 
@@ -372,6 +372,17 @@ export default function EventBookingWeb() {
 
       const bookingRef = await addDoc(collection(db, 'event_bookings'), bookingData);
       setShowBookingModal(false);
+
+      // Award loyalty points for the deposit paid (1 point per R10)
+      const pts = Math.floor(depositAmount / 10);
+      if (pts > 0 && user) {
+        awardLoyaltyPoints(
+          user.uid,
+          user.email || '',
+          pts,
+          `Event Venue Deposit: ${selectedVenue.name}`
+        );
+      }
 
       const diffDays = Math.ceil(Math.abs(modalEndDate.getTime() - modalStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 

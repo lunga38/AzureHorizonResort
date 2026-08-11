@@ -67,24 +67,42 @@ export function LoyaltyCard({ onBack }: LoyaltyCardProps) {
   const nextGoal = MILESTONE_REWARDS.find(r => r.pts > points) || MILESTONE_REWARDS[MILESTONE_REWARDS.length - 1];
   const goalProgress = Math.min(100, Math.round((points / nextGoal.pts) * 100));
 
-  // Listen to live user profile changes in Firestore to sync exact points
+  // Listen to live user profile changes in Firestore to sync exact points.
+  // NOTE: the 'users' collection is keyed by EMAIL (registerUser/loginUser/seed all
+  // use doc(db,'users',email)). Listening on the uid doc never fires, so points stayed
+  // stuck at the stale login-time value. Listen on email first, fall back to id/uid.
   useEffect(() => {
     const guestId = currentUser?.id || currentUser?.uid || currentUser?.email;
     if (!guestId) return;
 
-    const userRef = doc(db, 'users', guestId);
-    const unsubscribeUser = onSnapshot(userRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (typeof data.loyaltyPoints === 'number') {
-          setLivePoints(data.loyaltyPoints);
-        }
-      }
-    }, (error) => {
-      console.warn("Error listening to live user points on card:", error);
-    });
+    const candidates = [
+      currentUser?.email,
+      currentUser?.id,
+      currentUser?.uid,
+    ].filter(Boolean) as string[];
 
-    return () => unsubscribeUser();
+    const unsubscribers: (() => void)[] = [];
+    let synced = false;
+
+    for (const candidate of candidates) {
+      const userRef = doc(db, 'users', candidate);
+      const unsub = onSnapshot(userRef, (docSnap) => {
+        if (docSnap.exists() && docSnap.data()?.role) {
+          const data = docSnap.data();
+          if (typeof data.loyaltyPoints === 'number' && !synced) {
+            synced = true;
+            setLivePoints(data.loyaltyPoints);
+          }
+        }
+      }, (error) => {
+        console.warn("Error listening to live user points on card:", error);
+      });
+      unsubscribers.push(unsub);
+    }
+
+    return () => {
+      unsubscribers.forEach(u => u());
+    };
   }, [currentUser?.id, currentUser?.uid, currentUser?.email]);
 
   useEffect(() => {

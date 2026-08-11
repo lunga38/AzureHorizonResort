@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { listenForServiceRequests, updateServiceRequestStatus } from '@/services/firebase-services';
 import type { RoomServiceRequest } from '@/types';
 import { Card, CardContent } from '@/components/ui/card';
@@ -73,11 +73,17 @@ export function MaintenancePortal() {
     return () => unsubscribe();
   }, []);
 
+  // Refs so the interval subscribes once and always reads the latest state
+  const requestsRef = useRef<ExtendedServiceRequest[]>([]);
+  requestsRef.current = requests;
+  const showNotificationRef = useRef(false);
+  showNotificationRef.current = showNotification;
+
   useEffect(() => {
     const interval = setInterval(() => {
-      const pendingCount = requests.filter(r => r.status === 'pending').length;
-      if (pendingCount > 0 && !showNotification) {
-        const newestRequest = requests.find(r => r.status === 'pending');
+      const pendingCount = requestsRef.current.filter(r => r.status === 'pending').length;
+      if (pendingCount > 0 && !showNotificationRef.current) {
+        const newestRequest = requestsRef.current.find(r => r.status === 'pending');
         if (newestRequest) {
           setNewRequestNotification(newestRequest);
           setShowNotification(true);
@@ -87,7 +93,7 @@ export function MaintenancePortal() {
     }, 5000);
     
     return () => clearInterval(interval);
-  }, [requests, showNotification]);
+  }, []);
 
   const openWorkOrder = (request: ExtendedServiceRequest) => {
     setSelectedWorkOrder(request);
