@@ -1,0 +1,25 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.node.json"
+    }
+  ],
+  "compilerOptions": {
+    /* FIX 1: Satisfies Microsoft Edge Tools "strict" hint */
+    "strict": true,
+
+    /* FIX 2: Satisfies the "consistent-casing" hint for cross-OS safety */
+    "forceConsistentCasingInFileNames": true,
+
+    /* FIX 3: Silences the 'baseUrl' deprecation error */
+    "ignoreDeprecations": "6.0", 
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
