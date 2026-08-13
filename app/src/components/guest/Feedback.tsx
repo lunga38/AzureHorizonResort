@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { AlertModal } from '@/components/ui/AlertModal';
-import { Star, ChevronLeft, Loader2, BedDouble, UtensilsCrossed, Compass, Sparkles, MessageCircle, TrendingUp, Users, ThumbsUp, Lock, Tag, ShieldCheck } from 'lucide-react';
+import { Star, ChevronLeft, Loader2, BedDouble, UtensilsCrossed, Compass, Sparkles, MessageCircle, TrendingUp, Users, ThumbsUp, Lock, Tag, ShieldCheck, PartyPopper } from 'lucide-react';
 
 import type { User as AppUser } from '@/types';
 
@@ -49,6 +49,7 @@ const CATEGORIES = [
   { id: 'restaurant', label: 'Dining', icon: UtensilsCrossed, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-900/30', ring: 'ring-orange-200 dark:ring-orange-800' },
   { id: 'tour', label: 'Tours & Excursions', icon: Compass, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/30', ring: 'ring-amber-200 dark:ring-amber-800' },
   { id: 'spa', label: 'Spa Services', icon: Sparkles, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', ring: 'ring-purple-200 dark:ring-purple-800' },
+  { id: 'event', label: 'Event Venue', icon: PartyPopper, color: 'text-rose-500', bg: 'bg-rose-50 dark:bg-rose-900/30', ring: 'ring-rose-200 dark:ring-rose-800' },
 ];
 
 const CATEGORY_MAP: Record<string, typeof CATEGORIES[0]> = {};
@@ -156,6 +157,10 @@ export function Feedback({ onBack }: FeedbackProps) {
         // Restaurant orders
         const diningSnap = await getDocs(query(collection(db, 'order_confirmations'), where('guestId', '==', guestId)));
         if (!diningSnap.empty) eligible.add('restaurant');
+
+        // Event venue bookings
+        const eventSnap = await getDocs(query(collection(db, 'event_bookings'), where('guestId', '==', guestId)));
+        if (!eventSnap.empty) eligible.add('event');
       } catch (e) {
         console.error('Eligibility check error:', e);
       }
@@ -525,7 +530,7 @@ export function Feedback({ onBack }: FeedbackProps) {
               <div className="text-center py-8 px-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
                 <Lock className="h-8 w-8 text-amber-500 mx-auto mb-3" />
                 <p className="font-semibold text-gray-900 dark:text-white">No Services Used Yet</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">You can only review services you've actually booked or used. Book a room, tour, spa treatment, or place a dining order first!</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">You can only review services you've actually booked or used. Book a room, tour, spa treatment, place a dining order, or hire an event venue first!</p>
               </div>
             ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
