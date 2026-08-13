@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronLeft, Users, Image as ImageIcon, 
   Info, X, XCircle, CheckCircle, AlertCircle, Loader2
 } from 'lucide-react';
 import { db, auth } from '@/lib/firebase';
-import { awardLoyaltyPoints } from '@/services/firebase-services';
-import { doc, updateDoc } from 'firebase/firestore';
+import {
+  saveEventCatering,
+  updateEventBookingCateringTotals
+} from '@/services/firebase-services';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import './EventCatering.css';
 
 interface CateringItem {
@@ -141,7 +144,40 @@ export default function EventCateringWeb() {
   const navigate = useNavigate();
   const location = useLocation();
   
-  const { expectedAttendance = 30, bookingId } = location.state || {};
+  const { expectedAttendance = 30, bookingId, maxCapacity } = location.state || {};
+
+  // Hard cap = the venue's max capacity from the event booking (falls back to the largest venue)
+  const capacityCap = typeof maxCapacity === 'number' && maxCapacity > 0 ? maxCapacity : 400;
+
+  // Ownership validation (mobile-compatible): only the guest who owns the
+  // booking may attach catering to it.
+  const [bookingError, setBookingError] = useState('');
+  const [isValidating, setIsValidating] = useState(true);
+
+  useEffect(() => {
+    const validateBooking = async () => {
+      if (!bookingId) {
+        setBookingError('No booking reference found. Returning to dashboard.');
+        setIsValidating(false);
+        return;
+      }
+      try {
+        const user = auth.currentUser;
+        const snap = await getDoc(doc(db, 'event_bookings', bookingId));
+        if (!snap.exists()) {
+          setBookingError('Event booking not found. It may have been removed.');
+        } else if (user && snap.data().guestId && snap.data().guestId !== user.uid) {
+          setBookingError('You do not have permission to add catering to this event.');
+        }
+      } catch (err) {
+        console.error('Booking validation failed:', err);
+        setBookingError('Could not validate the event booking. Please try again.');
+      } finally {
+        setIsValidating(false);
+      }
+    };
+    validateBooking();
+  }, [bookingId]);
 
   // Aligned with Use Case 24 Flow 4 & 5: Tracks headcount and dietary needs per package
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedItemState>>({});
@@ -155,9 +191,9 @@ export default function EventCateringWeb() {
       if (newSelections[item.id]) {
         delete newSelections[item.id];
       } else {
-        // Automatically pre-populates with saved venue headcount, bounded by package minimum
+        // Automatically pre-populates with saved venue headcount, bounded by package minimum and venue capacity
         newSelections[item.id] = {
-          headcount: Math.max(expectedAttendance, item.minPeople),
+          headcount: Math.min(Math.max(expectedAttendance, item.minPeople), capacityCap),
           dietaryNotes: ''
         };
       }
@@ -199,38 +235,95 @@ export default function EventCateringWeb() {
       return;
     }
 
+    if (bookingError) {
+      window.alert(bookingError);
+      navigate('/');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const savedCateringItems = CATERING_OPTIONS
-        .filter(item => selectedItems[item.id])
-        .map(item => ({
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        window.alert("Please sign in to book catering.");
+        navigate('/login');
+        return;
+      }
+
+      const selected = CATERING_OPTIONS.filter(item => selectedItems[item.id]);
+
+      // 1) Mobile-compatible upsert into the event_caterings collection
+      await saveEventCatering({
+        guestId: currentUser.uid,
+        bookingId,
+        expectedAttendance,
+        items: selected.map(item => ({
+          id: item.id,
           name: item.name,
           pricePerPerson: item.pricePerPerson,
-          guestsCovered: selectedItems[item.id].headcount,
-          dietaryRequirements: selectedItems[item.id].dietaryNotes,
-          itemTotal: item.pricePerPerson * selectedItems[item.id].headcount
-        }));
+          quantity: selectedItems[item.id].headcount,
+          total: item.pricePerPerson * selectedItems[item.id].headcount,
+        })),
+        totalAmount: total,
+      });
 
-      const bookingRef = doc(db, 'event_bookings', bookingId);
-      await updateDoc(bookingRef, {
+      // 2) Keep the booking totals in sync (combined total, deposit, balance)
+      const totals = await updateEventBookingCateringTotals(bookingId, {
+        expectedAttendance,
+        cateringTotal: total,
+      });
+
+      // 3) Backward-compatible inline summary for the web financial card
+      const savedCateringItems = selected.map(item => ({
+        name: item.name,
+        pricePerPerson: item.pricePerPerson,
+        guestsCovered: selectedItems[item.id].headcount,
+        dietaryRequirements: selectedItems[item.id].dietaryNotes,
+        itemTotal: item.pricePerPerson * selectedItems[item.id].headcount
+      }));
+      await updateDoc(doc(db, 'event_bookings', bookingId), {
         cateringTotal: total,
         cateringItems: savedCateringItems
       });
 
-      // Award loyalty points for the catering spend (1 point per R10)
-      const pts = Math.floor(total / 10);
-      if (pts > 0) {
-        const currentUser = auth.currentUser;
-        awardLoyaltyPoints(
-          currentUser?.uid || '',
-          currentUser?.email || '',
-          pts,
-          `Event Catering: ${total >= 5000 ? 'Wedding & Premium' : 'Catering'} package`
+      const venueCost = totals.combinedTotal - total;
+
+      const goPay = (mode?: string) =>
+        navigate('/payment', {
+          state: {
+            bookingDetails: {
+              bookingId,
+              expectedAttendance,
+              maxCapacity: capacityCap,
+            },
+            paymentMode: mode,
+          }
+        });
+
+      if (totals.balanceDue <= 0) {
+        window.alert(
+          `Catering Saved!\n\nYour combined event total is R ${totals.combinedTotal.toLocaleString()} — fully covered by your previous payments.\n\nVenue: R ${venueCost.toLocaleString()}\nCatering: R ${total.toLocaleString()}\nAlready paid: R ${totals.amountPaid.toLocaleString()}\nBalance due: R 0`
         );
+        navigate('/');
+        return;
       }
 
-      window.alert("Success! Your catering package has been added to your event booking.");
-      navigate('/');
+      if (totals.amountPaid > 0) {
+        const goNow = window.confirm(
+          `Catering Saved — Balance Updated!\n\nCombined total: R ${totals.combinedTotal.toLocaleString()}\nAlready paid: R ${totals.amountPaid.toLocaleString()}\nNew balance due: R ${totals.balanceDue.toLocaleString()}\n\nPay the updated balance now, or settle it later from My Events.`
+        );
+        if (goNow) goPay();
+        else navigate('/');
+        return;
+      }
+
+      const choice = window.prompt(
+        `Catering Added to Your Event!\n\nCombined event total: R ${totals.combinedTotal.toLocaleString()}\nDeposit (50%): R ${totals.depositRequired.toLocaleString()}\n\nThis one payment covers your venue AND catering together.\n\nType 1 = Pay Deposit Now\nType 2 = Pay In Full\n(Anything else = Later)`,
+        '1'
+      );
+      if (choice === '1') goPay();
+      else if (choice === '2') goPay('full');
+      else navigate('/');
 
     } catch (error) {
       console.error("Error saving catering:", error);
@@ -254,7 +347,7 @@ export default function EventCateringWeb() {
       <main className="ec-scroll-content">
         <div className="ec-guest-count-badge">
           <Users size={20} color="#d97706" />
-          <span className="ec-guest-count-text">Venue Capacity Booked: {expectedAttendance} Guests</span>
+          <span className="ec-guest-count-text">Venue Capacity Booked: {expectedAttendance} Guests (Max {capacityCap})</span>
         </div>
 
         {CATERING_OPTIONS.map((item) => {
@@ -309,18 +402,22 @@ export default function EventCateringWeb() {
                     {/* Headcount Adjuster */}
                     <div style={{ marginBottom: '16px' }}>
                       <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#1e3a5f', marginBottom: '6px' }}>
-                        Adjust Headcount (Minimum: {item.minPeople})
+                        Adjust Headcount (Minimum: {item.minPeople} | Maximum: {capacityCap})
                       </label>
                       <input
                         type="number"
                         min={item.minPeople}
+                        max={capacityCap}
                         value={selectedData.headcount}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
-                          updateItemDetail(item.id, 'headcount', isNaN(val) ? item.minPeople : Math.max(val, item.minPeople));
+                          updateItemDetail(item.id, 'headcount', isNaN(val) ? item.minPeople : Math.min(Math.max(val, item.minPeople), capacityCap));
                         }}
                         style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #94a3b8', fontSize: '14px' }}
                       />
+                      <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#64748b' }}>
+                        Headcount cannot exceed the venue capacity of {capacityCap} guests.
+                      </p>
                     </div>
 
                     {/* Dietary Requirements */}

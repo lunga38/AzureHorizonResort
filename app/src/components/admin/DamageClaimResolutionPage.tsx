@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Gavel, CheckCircle2, AlertCircle, ShieldCheck } from 'lucide-react';
-import { collection, doc, updateDoc, onSnapshot, query, serverTimestamp } from 'firebase/firestore';
+import { Gavel, CheckCircle2, AlertCircle, ShieldCheck, Camera, Wrench } from 'lucide-react';
+import { collection, doc, updateDoc, onSnapshot, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 // --- CONSTANT OBJECT REPLACING ENUMS TO SATISFY ERASABLE SYNTAX ---
@@ -24,6 +24,21 @@ export const DamageClaimResolutionPage: React.FC = () => {
   const [resolutionReason, setResolutionReason] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{ claimRef: string; amount: number } | null>(null);
+  const [maintenanceStaff, setMaintenanceStaff] = useState<any[]>([]);
+  const [selectedTechnician, setSelectedTechnician] = useState<string>('');
+
+  useEffect(() => {
+    const fetchMaintenanceStaff = async () => {
+      try {
+        const q = query(collection(db, 'users'), where('role', '==', 'maintenance'));
+        const snap = await getDocs(q);
+        setMaintenanceStaff(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (error) {
+        console.error("Error fetching maintenance staff:", error);
+      }
+    };
+    fetchMaintenanceStaff();
+  }, []);
 
  useEffect(() => {
     // We fetch everything and filter in memory to prevent ANY Firebase Index errors during your demo
@@ -53,6 +68,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
     setFinalAmount(claim.totalCost || claim.estimatedCost || 0);
     setDecision(ClaimDecision.APPROVED_FULL_CHARGE);
     setResolutionReason('After reviewing maintenance evidence, full repair costs are confirmed.');
+    setSelectedTechnician(claim.assignedTechnicianId || '');
     setErrorMessage(null);
   };
 
@@ -85,6 +101,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
         decision: decision,
         finalAssessedAmount: Number(finalAmount),
         resolutionReason: resolutionReason,
+        assignedTechnicianId: selectedTechnician,
         resolvedAt: new Date().toISOString(), // Saving as ISO string to match your DB format
         updatedAt: serverTimestamp()
       });
@@ -149,6 +166,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
                       </div>
                       <p className="text-sm font-bold text-white">Event Booking REF: {eventRef}</p>
                       <p className="text-xs text-slate-400">Guest: {guestDisplay}</p>
+                      <p className="text-xs text-slate-500">Inspected by: {claim.inspectorName || claim.inspectorEmail || 'Event Manager'} · {claim.venueName || ''}</p>
                     </div>
 
                     <div className="flex items-center space-x-6">
@@ -177,7 +195,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
               <span>Adjudication Policy</span>
             </h3>
             <p className="text-xs text-slate-300 leading-relaxed">
-              All damage claims are backed by post-event inspection photos. Partial or full waivers may be granted for pre-existing wear or resort guest loyalty status.
+              All damage claims are backed by Event Manager post-event inspections using the standardized venue asset checklist, with photo evidence. Partial or full waivers may be granted for pre-existing wear or resort guest loyalty status.
             </p>
           </div>
         </div>
@@ -195,9 +213,65 @@ export const DamageClaimResolutionPage: React.FC = () => {
                   <span className="text-white font-bold">{selectedClaim.updatedByEmail || selectedClaim.guestId}</span>
                 </div>
                 <div className="flex justify-between text-slate-400">
+                  <span>Inspected By:</span>
+                  <span className="text-white font-bold">{selectedClaim.inspectorName || selectedClaim.inspectorEmail || 'Event Manager'}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
                   <span>Initial Damage Cost:</span>
                   <span className="text-rose-400 font-bold">R {(selectedClaim.totalCost || 0).toLocaleString()}</span>
                 </div>
+              </div>
+
+              {(selectedClaim.items?.length > 0) && (
+                <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
+                  <p className="text-slate-300 font-bold mb-2 flex items-center space-x-1.5">
+                    <Camera className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Inspected Assets & Photo Evidence ({selectedClaim.items.length})</span>
+                  </p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {selectedClaim.items.map((item: any, i: number) => (
+                      <div key={i} className="bg-slate-800/60 border border-slate-700/50 rounded-lg p-2.5 flex items-start gap-3">
+                        {item.photo ? (
+                          <img src={item.photo} alt={item.assetName || 'Damage proof'} className="h-14 w-20 object-cover rounded-lg border border-slate-600 shrink-0" />
+                        ) : (
+                          <div className="h-14 w-20 bg-slate-900 rounded-lg border border-dashed border-slate-700 flex items-center justify-center text-slate-600 shrink-0">
+                            No photo
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-white font-bold">{item.assetName || item.name || 'Asset'}</p>
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase mr-1">
+                            {item.condition || 'DAMAGED'}
+                          </span>
+                          <span className="text-slate-400">{item.category}</span>
+                          <p className="text-slate-400 mt-0.5 truncate">{item.description}</p>
+                          <p className="text-rose-400 font-mono font-bold">R {(item.estimatedCost || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-medium flex items-center space-x-1.5">
+                  <Wrench className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Assign Maintenance Technician</span>
+                </label>
+                <select
+                  value={selectedTechnician}
+                  onChange={(e) => setSelectedTechnician(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white font-bold"
+                >
+                  <option value="">-- Select Technician --</option>
+                  {maintenanceStaff.map((tech: any) => (
+                    <option key={tech.id || tech.email} value={tech.email || tech.name}>
+                      {tech.name} ({tech.email})
+                    </option>
+                  ))}
+                  <option value="Thabo Mbeki">Thabo Mbeki (t.mbeki@azurehorizon.com)</option>
+                  <option value="Kevin Du Preez">Kevin Du Preez (k.dupreez@azurehorizon.com)</option>
+                </select>
               </div>
 
               <div>

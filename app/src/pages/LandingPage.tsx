@@ -35,7 +35,8 @@ import {
   MapPin,
   MessageSquareHeart,
   Compass,
-  Flower2
+  Flower2,
+  CalendarCheck2
 } from 'lucide-react';
 
 interface LandingPageProps {
@@ -82,6 +83,7 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
         'maintenance': '/maintenance-portal',
         'tour_guide': '/tour-dashboard',
         'spa_staff': '/spa-dashboard',
+        'event_manager': '/event-manager',
         'admin': '/admin-dashboard'
       };
       
@@ -233,7 +235,8 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
           'waitstaff': 'Service / Waitstaff',
           'maintenance': 'Maintenance',
           'tour_guide': 'Tour Guide',
-          'spa_staff': 'Spa Therapist / Staff'
+          'spa_staff': 'Spa Therapist / Staff',
+          'event_manager': 'Event Manager'
         };
         const expectedRoleName = roleNames[userRoleLower] || userRoleLower;
         const selectedRoleName = roleNames[selectedRoleLower] || selectedRoleLower;
@@ -351,6 +354,7 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
                           <SelectItem value="maintenance"><div className="flex items-center gap-2"><Wrench className="h-4 w-4" />Maintenance</div></SelectItem>
                           <SelectItem value="tour_guide"><div className="flex items-center gap-2"><Compass className="h-4 w-4" />Tour Guide</div></SelectItem>
                           <SelectItem value="spa_staff"><div className="flex items-center gap-2"><Flower2 className="h-4 w-4" />Spa Staff</div></SelectItem>
+                          <SelectItem value="event_manager"><div className="flex items-center gap-2"><CalendarCheck2 className="h-4 w-4" />Event Manager</div></SelectItem>
                           <SelectItem value="admin"><div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-red-600" />Administrator</div></SelectItem>
                         </SelectContent>
                       </Select>

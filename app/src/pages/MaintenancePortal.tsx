@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { DamageInspectionPage } from '@/components/maintenance/DamageInspectionPage'; // 🚨 Added Damage Inspection component import
 
 import { 
   Wrench, 
@@ -20,8 +19,7 @@ import {
   Flag,
   UserCheck,
   ClipboardList,
-  Bell,
-  ShieldAlert
+  Bell
 } from 'lucide-react';
 
 type PriorityLevel = 'high' | 'medium' | 'low';
@@ -36,7 +34,6 @@ interface ExtendedServiceRequest extends RoomServiceRequest {
 const technicians = ['Thabo Mbeki', 'Kevin Du Preez', 'Chris Evans', 'Frikkie Louw', 'Unassigned'];
 
 export function MaintenancePortal() {
-  const [portalView, setPortalView] = useState<'work-orders' | 'damage-inspection'>('work-orders'); // 🚨 Added view state
   const [requests, setRequests] = useState<ExtendedServiceRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
@@ -316,26 +313,6 @@ export function MaintenancePortal() {
           </div>
           
           <div className="flex gap-4 items-center">
-            {/* View Switcher Toggle */}
-            <div className="flex bg-gray-200 dark:bg-slate-800 p-1 rounded-lg">
-              <Button
-                size="sm"
-                variant={portalView === 'work-orders' ? 'default' : 'ghost'}
-                onClick={() => setPortalView('work-orders')}
-                className="text-xs font-bold"
-              >
-                Active Work Orders
-              </Button>
-              <Button
-                size="sm"
-                variant={portalView === 'damage-inspection' ? 'default' : 'ghost'}
-                onClick={() => setPortalView('damage-inspection')}
-                className="text-xs font-bold flex items-center gap-1"
-              >
-                <ShieldAlert className="h-3.5 w-3.5" /> Damage Inspection
-              </Button>
-            </div>
-
             <div className="bg-white dark:bg-slate-900 p-3 rounded-lg shadow-sm border border-gray-100 dark:border-slate-800 text-center min-w-[100px]">
               <p className="text-[10px] font-bold uppercase text-gray-400 dark:text-gray-500">Active Tasks</p>
               <p className="text-xl font-bold text-[#1e3a5f] dark:text-white">
@@ -346,12 +323,7 @@ export function MaintenancePortal() {
         </div>
 
         {/* CONDITIONAL VIEW RENDERING */}
-        {portalView === 'damage-inspection' ? (
-          <div className="mt-4">
-            <DamageInspectionPage />
-          </div>
-        ) : (
-          <>
+        <>
             <div className="grid gap-4">
               {requests.length === 0 ? (
                 <Card className="border-dashed border-2 bg-gray-50/50 dark:bg-slate-900 dark:border-slate-800">
@@ -446,8 +418,7 @@ export function MaintenancePortal() {
                 <CheckCircle2 className="h-3 w-3 text-green-500" /> Resolved
               </div>
             </div>
-          </>
-        )}
+        </>
       </div>
     </div>
   );

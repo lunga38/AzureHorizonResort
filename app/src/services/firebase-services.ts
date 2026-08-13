@@ -18,7 +18,9 @@ import {
   getDocs,
   getDoc,
   deleteDoc,
-  runTransaction
+  runTransaction,
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { ref, push, set, onValue, off, update, get } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -595,6 +597,19 @@ export const createBooking = async (bookingData: Omit<Booking, 'id' | 'createdAt
       }
     }
 
+    // Award loyalty points for every room booking (1 point per R10)
+    if (bookingData.guestId && bookingData.guestEmail && bookingData.guestId !== 'guest-user') {
+      const pts = Math.floor((bookingData.totalAmount || 0) / 10);
+      if (pts > 0) {
+        awardLoyaltyPoints(
+          bookingData.guestId,
+          bookingData.guestEmail,
+          pts,
+          `Room Booking: ${bookingData.roomName}`
+        );
+      }
+    }
+
     return { success: true, bookingId: id };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown booking error occurred';
@@ -1057,7 +1072,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     tierRank: 1,
     validityDays: 30,
     terms: 'Valid for single use. Non-refundable.',
-    howToRedeem: 'Present this code to your waiter during dining.',
+    howToRedeem: 'Automatically applied - no staff verification needed. Your dessert is added to your dining bill at no cost.',
     isActive: true,
   },
   {
@@ -1070,7 +1085,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     tierRank: 2,
     validityDays: 30,
     terms: 'Subject to room availability upon request.',
-    howToRedeem: 'Inform the front desk upon check-in with your voucher code.',
+    howToRedeem: 'Automatically applied - your reservation checkout time is extended to 2:00 PM at no cost. No staff approval needed.',
     isActive: true,
   },
   {
@@ -1083,7 +1098,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     tierRank: 3,
     validityDays: 60,
     terms: 'Advanced reservation required.',
-    howToRedeem: 'Present voucher at the spa reception prior to treatment.',
+    howToRedeem: 'Automatically applied - your 30-minute treatment is pre-paid and confirmed when you book at the spa.',
     isActive: true,
   },
   {
@@ -1096,7 +1111,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     tierRank: 4,
     validityDays: 90,
     terms: 'Valid for up to 2 nights consecutive stay.',
-    howToRedeem: 'Contact reservations prior to arrival to confirm availability.',
+    howToRedeem: 'Automatically applied - your reservation is upgraded to an Executive Suite at no cost. No staff approval needed.',
     isActive: true,
   }
 ];
@@ -1263,12 +1278,8 @@ export async function awardLoyaltyPoints(
 }
 
 function generateVoucherCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = 'AZ-';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
+  // Matches the mobile app's format (AZURE-REWARD-XXXXXX) for cross-app interchangeability
+  return `AZURE-REWARD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
 
 // Mock Email function to prevent crashes without EmailJS credits
@@ -1276,12 +1287,19 @@ const sendVoucherEmail = (data: any) => {
   console.log("Mock EmailJS triggered for voucher:", data.voucherCode);
 };
 
+/**
+ * UC22 — Redeem loyalty reward using the SAME model as the mobile app:
+ * points are HELD (loyaltyPoints stays unchanged) until a staff member scans
+ * the voucher QR, then the spend is finalized. Vouchers live in
+ * `loyalty_vouchers` with mobile-compatible fields so a web-generated voucher
+ * can be redeemed by the mobile staff scanner and vice versa.
+ */
 export async function redeemRewardTransaction(
   userEmail: string,
   guestId: string,
   reward: RewardItem,
   userName: string = 'Valued Guest'
-): Promise<{ newPoints: number; voucher: RedemptionVoucher }> {
+): Promise<{ availablePoints: number; heldPoints: number; voucher: RedemptionVoucher }> {
   const cleanEmail = userEmail.trim().toLowerCase();
   
   const userRefUid = doc(db, 'users', guestId);
@@ -1291,13 +1309,14 @@ export async function redeemRewardTransaction(
   const logRef = doc(collection(db, 'loyalty_log'));
   
   const createdVoucherCode = generateVoucherCode();
-  const now = new Date();
-  const expires = new Date();
-  expires.setDate(expires.getDate() + (reward.validityDays || 30));
+  const nowMs = Date.now();
+  const expiresAtMs = nowMs + 24 * 60 * 60 * 1000; // 24 hours, same as mobile app
   
-  let newPoints = 0;
+  let userDocId = '';
+  let loyaltyPoints = 0;
+  let heldPoints = 0;
 
-  // 1. TRANSACTION: Only used for strict point deduction math
+  // 1. TRANSACTION: Strict hold-points math (loyaltyPoints UNCHANGED, heldPoints increases)
   await runTransaction(db, async (transaction) => {
     let userSnap = await transaction.get(userRefUid);
     let activeRef = userRefUid;
@@ -1310,19 +1329,21 @@ export async function redeemRewardTransaction(
       }
     }
 
-    const userData = userSnap.data() as AppUser;
-    const currentPoints = userData.loyaltyPoints || 0;
+    userDocId = activeRef.id;
+    const userData = userSnap.data() as AppUser & { heldPoints?: number };
+    loyaltyPoints = userData.loyaltyPoints || 0;
+    const currentHeld = userData.heldPoints || 0;
+    const availablePoints = Math.max(0, loyaltyPoints - currentHeld);
     
-    if (currentPoints < reward.pts) {
-      throw new Error(`Insufficient points. You need ${reward.pts} points, but only have ${currentPoints}.`);
+    if (availablePoints < reward.pts) {
+      throw new Error(`Insufficient available points. You need ${reward.pts} points, but only have ${availablePoints} available (${currentHeld} held in pending vouchers).`);
     }
     
-    newPoints = currentPoints - reward.pts;
-    const newTier = calculateLoyaltyTier(newPoints);
+    heldPoints = currentHeld + reward.pts;
     
     transaction.update(activeRef, {
-      loyaltyPoints: newPoints,
-      loyaltyTier: newTier,
+      heldPoints,
+      loyaltyTier: calculateLoyaltyTier(loyaltyPoints),
     });
   });
   
@@ -1331,21 +1352,26 @@ export async function redeemRewardTransaction(
     id: voucherRef.id,
     guestId,
     userEmail: cleanEmail,
+    userDocId,
     rewardId: String(reward.id),
     rewardTitle: reward.title,
-    ptsSpent: reward.pts, // Group member forgot this! Added so receipt math works!
+    ptsSpent: reward.pts,
     voucherCode: createdVoucherCode,
-    status: 'active',
-    createdAt: now.toISOString(),
-    expiresAt: expires.toISOString(),
+    status: 'pending', // Mobile-compatible: pending until staff scan finalizes it
+    claimed: false,
+    howToRedeem: reward.howToRedeem || 'Present this QR to a staff member to redeem.',
+    terms: reward.terms || '',
+    createdAt: new Date(nowMs).toISOString(),
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    expiresAtMs,
   };
   
   const logEntry: LoyaltyLogEntry = {
     id: logRef.id,
     guestId,
-    points: -reward.pts,
-    reason: `Redeemed: ${reward.title}`,
-    createdAt: now.toISOString(),
+    points: 0,
+    reason: `Points Held (${reward.pts} pts): ${reward.title}`,
+    createdAt: new Date(nowMs).toISOString(),
   };
 
   // Push writes directly to standard queue
@@ -1358,9 +1384,492 @@ export async function redeemRewardTransaction(
     rewardTitle: reward.title,
     voucherCode: createdVoucherCode,
     ptsSpent: reward.pts,
-    remainingPoints: newPoints,
-    expiresAt: expires.toISOString(),
+    remainingPoints: loyaltyPoints - heldPoints,
+    expiresAt: new Date(expiresAtMs).toISOString(),
   });
 
-  return { newPoints, voucher: createdVoucher };
+  return { availablePoints: Math.max(0, loyaltyPoints - heldPoints), heldPoints, voucher: createdVoucher };
 }
+
+// ==========================================
+// SHARED QR CODES (interchangeable with the mobile app)
+// ==========================================
+// These functions mirror the mobile app (my-mobile-app) exactly: same signing
+// secret, same payload shapes, same Firestore collections. A QR generated by
+// the web app can be scanned by the mobile staff app and vice versa.
+
+const QR_SIGNING_SECRET = "azure-horizon-demo-signing-secret-2026";
+
+async function hmacDigest(payload: any): Promise<string> {
+  const data = new TextEncoder().encode(QR_SIGNING_SECRET + JSON.stringify(payload));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * UC22 — Rotating signed loyalty member QR (same payload as mobile's
+ * generateLoyaltyQR). Staff scan it with the loyalty scanner; valid for 60s.
+ */
+export async function generateLoyaltyQR(): Promise<{ qrPayload: any; rotateInterval: number }> {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('User must be authenticated');
+
+  const userSnap = await getDoc(doc(db, 'users', user.email.toLowerCase().trim()));
+  if (!userSnap.exists()) throw new Error('User profile not found');
+  const userData = userSnap.data() as any;
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+  const payload = {
+    guestId: user.uid,
+    email: user.email.toLowerCase().trim(),
+    points: userData.loyaltyPoints || 0,
+    tier: userData.loyaltyTier || 'bronze',
+    ts: timestamp,
+    nonce,
+  };
+
+  const sig = await hmacDigest(payload);
+  return { qrPayload: { ...payload, sig }, rotateInterval: 30000 };
+}
+
+/**
+ * UC22 — Validate a loyalty member QR (same logic as mobile's validateLoyaltyQR).
+ */
+export async function validateLoyaltyQR(args: { qrPayload: string }): Promise<{ valid: boolean; guest?: any; reason?: string; message?: string }> {
+  let payload: any;
+  try {
+    payload = typeof args.qrPayload === 'string' ? JSON.parse(args.qrPayload) : args.qrPayload;
+  } catch {
+    return { valid: false, message: 'Invalid QR format' };
+  }
+
+  const { guestId, email, ts, sig } = payload;
+  if (!guestId || !sig) {
+    return { valid: false, message: 'Invalid QR payload structure' };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > 60) {
+    return { valid: false, reason: 'expired', message: 'QR code has expired, please refresh' };
+  }
+
+  const payloadForVerification: any = { ...payload };
+  delete payloadForVerification.sig;
+  const expectedSig = await hmacDigest(payloadForVerification);
+  if (sig !== expectedSig) {
+    return { valid: false, reason: 'invalid_signature', message: 'Invalid QR code signature' };
+  }
+
+  const lookupEmail = email;
+  const userSnap = await getDoc(doc(db, 'users', String(lookupEmail).toLowerCase().trim()));
+  if (!userSnap.exists()) {
+    return { valid: false, reason: 'user_not_found', message: 'Guest profile not found' };
+  }
+  const userData = userSnap.data() as any;
+
+  return {
+    valid: true,
+    guest: {
+      id: guestId,
+      name: userData.name || userData.displayName || 'Guest',
+      email: userData.email,
+      loyaltyPoints: userData.loyaltyPoints || 0,
+      loyaltyTier: userData.loyaltyTier || 'bronze',
+      photoURL: userData.photoURL || '',
+      roomNumber: userData.roomNumber || 'N/A',
+      status: userData.status || 'guest',
+    },
+  };
+}
+
+/**
+ * UC25 — Generate a signed event invitation QR pass (same payload as mobile's
+ * generateInvitationQR). Creates an `event_invitations` doc and stores the
+ * signed payload so any staff scanner (web or mobile) can validate it.
+ */
+export async function generateInvitationQR(args: {
+  eventId: string;
+  inviteeEmail: string;
+  inviteeName: string;
+}): Promise<{ invitationId: string; qrCode: string; inviteeEmail: string; inviteeName: string }> {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('User must be authenticated');
+  const { eventId, inviteeEmail, inviteeName } = args;
+
+  if (!eventId || !inviteeEmail) {
+    throw new Error('Missing required fields');
+  }
+
+  const eventSnap = await getDoc(doc(db, 'event_bookings', eventId));
+  if (!eventSnap.exists()) throw new Error('Event not found');
+  const eventData = eventSnap.data() as any;
+  if (eventData.guestId !== user.uid) throw new Error('Not authorized for this event');
+
+  const invitationRef = await addDoc(collection(db, 'event_invitations'), {
+    eventId,
+    inviteeEmail: inviteeEmail.toLowerCase().trim(),
+    inviteeName,
+    hostId: user.uid,
+    status: 'pending',
+    issuedAt: Date.now(),
+    createdAt: serverTimestamp(),
+  });
+
+  const payload = {
+    invitationId: invitationRef.id,
+    eventId,
+    inviteeEmail: inviteeEmail.toLowerCase().trim(),
+    inviteeName,
+    hostId: user.uid,
+    status: 'pending',
+    issuedAt: Date.now(),
+  };
+  const sig = await hmacDigest(payload);
+  const qrCode = JSON.stringify({ ...payload, sig });
+
+  await updateDoc(invitationRef, { qrCode });
+
+  return {
+    invitationId: invitationRef.id,
+    qrCode,
+    inviteeEmail: payload.inviteeEmail,
+    inviteeName,
+  };
+}
+
+/**
+ * UC27 — Validate an attendee QR pass and check the attendee in
+ * (same logic as mobile's validateAttendeeQR). Used by staff on web AND mobile.
+ */
+export async function validateAttendeeQR(args: {
+  qrPayload: string;
+}): Promise<{ valid: boolean; message: string; reason?: string; attendee?: any }> {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('Staff authentication required');
+
+  let payload: any;
+  try {
+    payload = typeof args.qrPayload === 'string' ? JSON.parse(args.qrPayload) : args.qrPayload;
+  } catch {
+    return { valid: false, message: 'Invalid QR format' };
+  }
+
+  const { invitationId, eventId, inviteeEmail, sig } = payload;
+  if (!invitationId || !eventId || !inviteeEmail || !sig) {
+    return { valid: false, message: 'Invalid QR payload structure' };
+  }
+
+  const payloadForVerification: any = { ...payload };
+  delete payloadForVerification.sig;
+  const expectedSig = await hmacDigest(payloadForVerification);
+  if (sig !== expectedSig) {
+    return { valid: false, reason: 'invalid_signature', message: 'Invalid QR signature' };
+  }
+
+  const invitationSnap = await getDoc(doc(db, 'event_invitations', invitationId));
+  if (!invitationSnap.exists()) {
+    return { valid: false, message: 'Invitation not found' };
+  }
+  const invitationData = invitationSnap.data() as any;
+
+  if (invitationData.eventId !== eventId || invitationData.inviteeEmail !== inviteeEmail) {
+    return { valid: false, message: 'QR code mismatch' };
+  }
+
+  if (invitationData.status === 'checked_in') {
+    return { valid: false, reason: 'already_checked_in', message: 'Attendee already checked in', attendee: invitationData };
+  }
+  if (invitationData.status === 'declined') {
+    return { valid: false, reason: 'declined', message: 'Invitation was declined', attendee: invitationData };
+  }
+
+  const eventSnap = await getDoc(doc(db, 'event_bookings', eventId));
+  if (!eventSnap.exists()) {
+    return { valid: false, message: 'Event not found' };
+  }
+  const eventData = eventSnap.data() as any;
+  if (eventData.status === 'cancelled' || eventData.status === 'rejected') {
+    return { valid: false, reason: 'event_cancelled', message: 'Event reservation has been cancelled or rejected' };
+  }
+
+  await updateDoc(doc(db, 'event_invitations', invitationId), {
+    status: 'checked_in',
+    checkedInAt: serverTimestamp(),
+    checkedInBy: user.uid,
+  });
+
+  await addDoc(collection(db, 'attendee_checkins'), {
+    eventId,
+    invitationId,
+    attendeeId: invitationId,
+    inviteeEmail,
+    inviteeName: invitationData.inviteeName,
+    checkedInAt: serverTimestamp(),
+    checkedInBy: user.uid,
+    method: 'qr_scan',
+  });
+
+  return {
+    valid: true,
+    message: 'Check-in successful',
+    attendee: { ...invitationData, invitationId },
+  };
+}
+
+/**
+ * UC22 — Staff-side voucher redemption (same logic as mobile's
+ * redeemVoucherByStaff). Looks up `loyalty_vouchers` by code, finalizes the
+ * held-points deduction and marks the voucher redeemed.
+ */
+export async function redeemVoucherByStaff(voucherCode: string, staffUid: string): Promise<{ success: boolean; message: string; voucher?: any }> {
+  const q = query(collection(db, 'loyalty_vouchers'), where('voucherCode', '==', voucherCode.trim().toUpperCase()));
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    throw new Error('Invalid or non-existent voucher code.');
+  }
+  const vDoc = snap.docs[0];
+  const data = vDoc.data() as any;
+  if (data.status === 'redeemed' || data.claimed) {
+    throw new Error('Voucher has already been redeemed.');
+  }
+  if (data.status === 'expired_refunded') {
+    throw new Error('Voucher has expired and held points were released.');
+  }
+  if (data.expiresAtMs && Date.now() > data.expiresAtMs) {
+    throw new Error('Voucher has passed the 24-hour expiration window.');
+  }
+
+  const pointsToDeduct = Number(data.pointsSpent || 0);
+
+  await runTransaction(db, async (transaction) => {
+    const targetUserId = data.userDocId || data.guestId;
+    const userRef = doc(db, 'users', targetUserId);
+    const userSnap = await transaction.get(userRef);
+
+    if (userSnap.exists()) {
+      const userData = userSnap.data() as any;
+      const currentLoyaltyPoints = userData.loyaltyPoints || 0;
+      const currentHeldPoints = userData.heldPoints || 0;
+
+      const newLoyaltyPoints = Math.max(0, currentLoyaltyPoints - pointsToDeduct);
+      const newHeldPoints = Math.max(0, currentHeldPoints - pointsToDeduct);
+
+      transaction.update(userRef, {
+        loyaltyPoints: newLoyaltyPoints,
+        heldPoints: newHeldPoints,
+        loyaltyTier: calculateLoyaltyTier(newLoyaltyPoints),
+      });
+    }
+
+    transaction.update(doc(db, 'loyalty_vouchers', vDoc.id), {
+      claimed: true,
+      status: 'redeemed',
+      claimedAt: serverTimestamp(),
+      claimedByStaff: staffUid,
+    });
+
+    transaction.set(doc(collection(db, 'loyalty_log')), {
+      guestId: data.guestId,
+      points: -pointsToDeduct,
+      reason: `Staff Verified Scan: ${data.rewardTitle}`,
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  return { success: true, message: `Voucher ${data.rewardTitle} redeemed`, voucher: { ...data, status: 'redeemed' } };
+}
+// ============================================================
+// EVENT PAYMENT & CATERING � MOBILE-PARITY HELPERS
+// Mirrors the mobile app's deriveBookingPaymentState / applyEventPayment /
+// saveEventCatering / updateEventBookingCateringTotals exactly, so web and
+// mobile read the same money state and write the same documents.
+// ============================================================
+
+export const saveEventCatering = async (data: {
+  guestId: string;
+  bookingId: string;
+  expectedAttendance: number;
+  items: { id: string; name: string; pricePerPerson: number; quantity: number; total: number }[];
+  totalAmount: number;
+}) => {
+  const existing = await getDocs(
+    query(
+      collection(db, 'event_caterings'),
+      where('bookingId', '==', data.bookingId),
+      where('guestId', '==', data.guestId)
+    )
+  );
+  const payload = {
+    guestId: data.guestId,
+    bookingId: data.bookingId,
+    expectedAttendance: data.expectedAttendance,
+    items: data.items,
+    totalAmount: data.totalAmount,
+    status: 'confirmed',
+    updatedAt: new Date().toISOString(),
+  };
+  if (!existing.empty) {
+    await updateDoc(existing.docs[0].ref, payload);
+    return existing.docs[0].id;
+  }
+  const ref = await addDoc(collection(db, 'event_caterings'), {
+    ...payload,
+    createdAt: new Date().toISOString(),
+  });
+  return ref.id;
+};
+
+export const getCateringForBooking = async (bookingId: string): Promise<any | null> => {
+  const snap = await getDocs(query(collection(db, 'event_caterings'), where('bookingId', '==', bookingId)));
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+};
+
+// Single source of truth for a booking's money state. Always re-derives from the
+// booking doc + the current catering selection so no screen can show stale totals.
+export const deriveBookingPaymentState = (
+  booking: any,
+  cateringSelectionTotal?: number
+) => {
+  const venueCost = Math.max(0, Number(booking.totalAmount || booking.venueCost || 0));
+  const cateringTotal = Math.max(
+    0,
+    Number(booking.cateringTotal || cateringSelectionTotal || 0)
+  );
+  const combinedTotal = venueCost + cateringTotal;
+  const depositRequired = Math.round(combinedTotal / 2);
+  const amountPaid = Math.max(0, Number(booking.amountPaid || booking.paidAmount || 0));
+  const balanceDue = Math.max(0, combinedTotal - amountPaid);
+  const paymentStatus: 'none' | 'deposit_paid' | 'paid_in_full' =
+    amountPaid >= combinedTotal ? 'paid_in_full' : amountPaid >= depositRequired ? 'deposit_paid' : 'none';
+  return {
+    venueCost,
+    cateringTotal,
+    combinedTotal,
+    depositRequired,
+    amountPaid,
+    balanceDue,
+    paymentStatus,
+  };
+};
+
+// Called after a catering selection is saved: keeps booking totals in sync
+// (headcount, combined total, deposit, remaining balance).
+export const updateEventBookingCateringTotals = async (
+  bookingId: string,
+  opts: { expectedAttendance: number; cateringTotal: number }
+) => {
+  const snap = await getDoc(doc(db, 'event_bookings', bookingId));
+  if (!snap.exists()) throw new Error('Booking not found');
+  const b = snap.data() as any;
+  const venueCost = Math.max(0, Number(b.totalAmount || b.venueCost || 0));
+  const combinedTotal = venueCost + Math.max(0, opts.cateringTotal);
+  const depositRequired = Math.round(combinedTotal / 2);
+  const amountPaid = Math.max(0, Number(b.amountPaid || b.paidAmount || 0));
+  const balanceDue = Math.max(0, combinedTotal - amountPaid);
+  const paymentStatus = amountPaid >= combinedTotal ? 'paid_in_full' : amountPaid >= depositRequired ? 'deposit_paid' : 'none';
+  await updateDoc(snap.ref, {
+    expectedAttendance: opts.expectedAttendance,
+    cateringTotal: Math.max(0, opts.cateringTotal),
+    combinedTotal,
+    depositRequired,
+    balanceDue,
+    paymentStatus,
+  });
+  return { combinedTotal, depositRequired, amountPaid, balanceDue, paymentStatus };
+};
+
+// Applied on every successful payment (deposit, balance, or full).
+// amountPaid accumulates; balanceDue/paymentStatus are re-derived and the
+// lifecycle status only ever moves forward (never downgrades an approved venue).
+export const applyEventPayment = async (
+  bookingId: string,
+  amountPaidNow: number,
+  opts: { paymentMethod: string; paymentReference: string; paymentMode: string }
+) => {
+  const bookingRef = doc(db, 'event_bookings', bookingId);
+  await updateDoc(bookingRef, {
+    amountPaid: increment(amountPaidNow),
+    lastPaymentAt: new Date().toISOString(),
+    lastPaymentAmountNow: amountPaidNow,
+  });
+  const snap = await getDoc(bookingRef);
+  if (!snap.exists()) throw new Error('Booking not found');
+  const b = snap.data() as any;
+  const venueCost = Math.max(0, Number(b.totalAmount || b.venueCost || 0));
+  const cateringTotal = Math.max(0, Number(b.cateringTotal || 0));
+  const combinedTotal = venueCost + cateringTotal;
+  const depositRequired = Math.round(combinedTotal / 2);
+  const amountPaid = Math.max(0, Number(b.amountPaid || 0));
+  const balanceDue = Math.max(0, combinedTotal - amountPaid);
+  const paymentStatus = amountPaid >= combinedTotal ? 'paid_in_full' : amountPaid >= depositRequired ? 'deposit_paid' : 'none';
+  const currentStatus = String(b.status || '').toLowerCase();
+  const status = ['pending_payment', 'pending'].includes(currentStatus) ? 'confirmed' : b.status;
+  await updateDoc(bookingRef, {
+    balanceDue,
+    paymentStatus,
+    status,
+    paymentMode: opts.paymentMode,
+    paymentReference: opts.paymentReference,
+    paymentMethod: opts.paymentMethod,
+    paidAt: new Date().toISOString(),
+  });
+  return { combinedTotal, depositRequired, amountPaid, balanceDue, paymentStatus, status };
+};
+
+// Writes a payment record that BOTH apps can read:
+//  - 'payments' collection (mobile folio/history model, timestamp fields)
+//  - 'receipts' collection (web BillingView guest-charges model)
+export const createEventPaymentRecord = async (data: {
+  guestId: string;
+  guestName: string;
+  guestEmail: string;
+  bookingId: string;
+  amount: number;
+  paymentMethod: string;
+  paymentReference: string;
+  paymentMode: string;
+  invoiceNumber: string;
+  items: { name: string; quantity: number; price: number; subtotal: number }[];
+  pointsEarned: number;
+}) => {
+  const now = new Date();
+  try {
+    const paymentRef = await addDoc(collection(db, 'payments'), {
+      guestId: data.guestId,
+      guestEmail: data.guestEmail,
+      guestName: data.guestName,
+      bookingId: data.bookingId,
+      amount: data.amount,
+      items: data.items,
+      status: 'paid',
+      invoiceNumber: data.invoiceNumber,
+      paymentReference: data.paymentReference,
+      paymentMode: data.paymentMode,
+      pointsEarned: data.pointsEarned,
+      dateStr: now.toISOString().slice(0, 10),
+      createdAt: serverTimestamp(),
+    });
+    await addDoc(collection(db, 'receipts'), {
+      guestId: data.guestId,
+      guestName: data.guestName,
+      bookingId: data.bookingId,
+      items: data.items,
+      totalAmount: data.amount,
+      status: 'paid',
+      type: 'event_payment',
+      paymentMode: data.paymentMode,
+      paymentReference: data.paymentReference,
+      invoiceNumber: data.invoiceNumber,
+      createdAt: serverTimestamp(),
+    });
+    return { success: true, paymentId: paymentRef.id };
+  } catch (error) {
+    console.error('Payment record error:', error);
+    return { success: false, error };
+  }
+};

@@ -5,7 +5,7 @@ import {
   Building, XCircle, FileText, AlertCircle 
 } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
-import { fetchBlockedSlotsWithBuffer, awardLoyaltyPoints } from '@/services/firebase-services';
+import { fetchBlockedSlotsWithBuffer } from '@/services/firebase-services';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import './EventBooking.css';
 
@@ -152,8 +152,13 @@ export default function EventBookingWeb() {
       try {
         const dateString = getLocalISODate(selectedDate);
         const bookingsRef = collection(db, 'event_bookings');
-        const q = query(bookingsRef, where('bookedDates', 'array-contains', dateString));
-        const snapshot = await getDocs(q);
+        // Reads BOTH booking models so web-created (bookedDates) and
+        // mobile-created (eventDateStr) bookings block the same venue.
+        const [snapWeb, snapMobile] = await Promise.all([
+          getDocs(query(bookingsRef, where('bookedDates', 'array-contains', dateString))),
+          getDocs(query(bookingsRef, where('eventDateStr', '==', dateString))),
+        ]);
+        const snapshot = { docs: [...snapWeb.docs, ...snapMobile.docs] };
         
         const fullyBookedIds = new Set<string>();
         const hourlyBlocks: Record<string, Set<string>> = {};
@@ -348,14 +353,34 @@ export default function EventBookingWeb() {
 
       const totalAmount = calculateTotal();
       const depositAmount = Math.round(totalAmount * 0.5); 
+
+      // Duplicate booking guard (mobile-compatible): one active booking per
+      // guest per date — prevents a double reservation while the modal was open.
+      const duplicateQ = query(
+        collection(db, 'event_bookings'),
+        where('guestId', '==', user.uid),
+        where('eventDateStr', '==', startDateString)
+      );
+      const duplicateSnap = await getDocs(duplicateQ);
+      const activeDuplicate = duplicateSnap.docs.find(d => {
+        const s = d.data().status;
+        return s !== 'cancelled' && s !== 'rejected';
+      });
+      if (activeDuplicate) {
+        window.alert(`Duplicate Reservation Guard: You already have an active event booking for ${startDateString}. Guests cannot create multiple venue bookings on the same date.`);
+        setIsSubmitting(false);
+        return;
+      }
         
       const bookingData = {
         guestId: user.uid,
         guestName: user.displayName || 'Event Organizer',
         venueId: selectedVenue.id,
         venueName: selectedVenue.name,
+        venueMaxCapacity: selectedVenue.maxCapacity,
         eventDate: modalStartDate.toISOString(),
         date: startDateString,
+        eventDateStr: startDateString, // Mobile availability model — cross-app visible
         bookedDates: bookedDatesArray,
         expectedAttendance,
         eventType: selectedType !== 'All' ? selectedType : 'General Event',
@@ -373,17 +398,6 @@ export default function EventBookingWeb() {
       const bookingRef = await addDoc(collection(db, 'event_bookings'), bookingData);
       setShowBookingModal(false);
 
-      // Award loyalty points for the deposit paid (1 point per R10)
-      const pts = Math.floor(depositAmount / 10);
-      if (pts > 0 && user) {
-        awardLoyaltyPoints(
-          user.uid,
-          user.email || '',
-          pts,
-          `Event Venue Deposit: ${selectedVenue.name}`
-        );
-      }
-
       const diffDays = Math.ceil(Math.abs(modalEndDate.getTime() - modalStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
       // 🚨 UPDATED: Maps payload perfectly for the PaymentPage component
@@ -394,6 +408,7 @@ export default function EventBookingWeb() {
             checkIn: formatDate(modalStartDate),
             checkOut: bookingType === 'daily' ? formatDate(modalEndDate) : formatDate(modalStartDate),
             guests: expectedAttendance,
+            maxCapacity: selectedVenue.maxCapacity, // Venue capacity cap for the catering page
             roomRate: bookingType === 'hourly' ? getHourlyRate(selectedVenue.pricePerDay) : selectedVenue.pricePerDay,
             nights: bookingType === 'daily' ? diffDays : selectedDuration,
             subtotal: totalAmount,

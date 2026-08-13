@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Calendar, MapPin, Clock, Receipt, Users, 
   CheckCircle, Loader2, AlertCircle, ChevronLeft, ChevronRight, Utensils,
-  Mail, XCircle, Send
+  Mail, XCircle, Send, QrCode, CreditCard
 } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import emailjs from '@emailjs/browser';
 import { Badge } from '@/components/ui/badge';
+import { QRCodeSVG } from 'qrcode.react';
+import { generateInvitationQR, deriveBookingPaymentState } from '@/services/firebase-services';
 
 interface CateringDetail {
   name: string;
@@ -20,14 +23,19 @@ interface CateringDetail {
 
 interface Invitee {
   email: string;
+  name?: string;
+  inviteeName?: string;
   status: string;
   passLink: string;
+  invitationId?: string;
+  qrCode?: string;
 }
 
 interface EventBooking {
   id: string;
   venueName?: string;
   date?: string;
+  eventDateStr?: string;
   bookedDates?: string[];
   bookingType?: 'hourly' | 'daily';
   startTime?: string | null;
@@ -35,6 +43,8 @@ interface EventBooking {
   expectedAttendance?: number;
   totalAmount?: number;
   depositRequired?: number;
+  amountPaid?: number;
+  paymentStatus?: string;
   status?: string;
   createdAt?: string;
   cateringTotal?: number;
@@ -46,61 +56,62 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
   const [bookings, setBookings] = useState<EventBooking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const user = auth.currentUser;
+  const navigate = useNavigate();
 
   // Invitation Modal State
   const [activeInviteBooking, setActiveInviteBooking] = useState<EventBooking | null>(null);
   const [inviteEmailsText, setInviteEmailsText] = useState('');
+  const [inviteNameText, setInviteNameText] = useState('');
   const [isSendingInvites, setIsSendingInvites] = useState(false);
 
+  // Guest Passes Modal State
+  const [viewPassesBooking, setViewPassesBooking] = useState<EventBooking | null>(null);
+
+  // LIVE subscription: bookings (and every payment/catering change made on
+  // web OR mobile) appear instantly without refreshing.
   useEffect(() => {
-    const fetchMyEvents = async () => {
-      if (!user) return;
-      
-      try {
-        const bookingsRef = collection(db, 'event_bookings');
-        const q = query(bookingsRef, where('guestId', '==', user.uid));
-        const snapshot = await getDocs(q);
-        
-        const fetchedBookings: EventBooking[] = [];
-        snapshot.docs.forEach(docSnap => {
-          fetchedBookings.push({ id: docSnap.id, ...docSnap.data() } as EventBooking);
-        });
+    if (!user) {
+      setIsLoading(false);
+      return;
+    }
 
-        fetchedBookings.sort((a, b) => {
-          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return timeB - timeA;
-        });
-        
-        setBookings(fetchedBookings);
-      } catch (error) {
-        console.error("Error fetching event bookings:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    const bookingsRef = collection(db, 'event_bookings');
+    const q = query(bookingsRef, where('guestId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as EventBooking));
+      fetched.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+      setBookings(fetched);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error fetching event bookings:", error);
+      setIsLoading(false);
+    });
 
-    fetchMyEvents();
+    return () => unsubscribe();
   }, [user]);
 
   const handleSimulateReceipt = (booking: EventBooking) => {
-    let receiptText = `Downloading Receipt for Booking ID: ${booking.id}\n`;
+    const money = deriveBookingPaymentState(booking);
+    let receiptText = `Receipt Summary for Booking: ${booking.id.substring(0, 8).toUpperCase()}\n`;
     receiptText += `\nVenue: ${booking.venueName || 'Resort Venue'}`;
-    receiptText += `\nVenue Total: R ${(booking.totalAmount || 0).toLocaleString()}`;
-    receiptText += `\nDeposit Paid: R ${(booking.depositRequired || 0).toLocaleString()}`;
-    
-    if (booking.cateringTotal && booking.cateringItems && booking.cateringItems.length > 0) {
-      receiptText += `\n\n--- CATERING ADD-ONS ---`;
-      booking.cateringItems.forEach(item => {
-         receiptText += `\n* ${item.name} (x${item.guestsCovered}): R ${item.itemTotal.toLocaleString()}`;
-      });
-      receiptText += `\nTotal Catering: R ${booking.cateringTotal.toLocaleString()}`;
+    receiptText += `\nVenue Cost: R ${money.venueCost.toLocaleString()}`;
+    if (money.cateringTotal > 0) {
+      receiptText += `\nCatering: R ${money.cateringTotal.toLocaleString()}`;
+      if (booking.cateringItems && booking.cateringItems.length > 0) {
+        receiptText += `\n\n--- CATERING ADD-ONS ---`;
+        booking.cateringItems.forEach(item => {
+          receiptText += `\n* ${item.name} (x${item.guestsCovered}): R ${item.itemTotal.toLocaleString()}`;
+        });
+      }
     }
-    
-    const venueBalance = (booking.totalAmount || 0) - (booking.depositRequired || 0);
-    const finalBalance = venueBalance + (booking.cateringTotal || 0);
-    receiptText += `\n\nFINAL BALANCE DUE: R ${finalBalance.toLocaleString()}`;
-    
+    receiptText += `\n\nCOMBINED EVENT TOTAL: R ${money.combinedTotal.toLocaleString()}`;
+    receiptText += `\nAmount Paid: R ${money.amountPaid.toLocaleString()}`;
+    receiptText += `\nPayment Status: ${money.paymentStatus === 'paid_in_full' ? 'PAID IN FULL' : money.paymentStatus === 'deposit_paid' ? 'DEPOSIT PAID' : 'PENDING PAYMENT'}`;
+    receiptText += `\n\nBALANCE DUE: R ${money.balanceDue.toLocaleString()}`;
     window.alert(receiptText);
   };
 
@@ -144,48 +155,77 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
     if (!activeInviteBooking) return;
     
     // Parse the emails from the text area
-    const rawEmails = inviteEmailsText.split(/[\n,]+/).map(e => e.trim()).filter(e => e !== '');
+    const rawEmails = inviteEmailsText.split(/[\n,]+/).map(e => e.trim().toLowerCase()).filter(e => e !== '');
     
     if (rawEmails.length === 0) {
       window.alert("Please enter at least one email address.");
       return;
     }
 
-    // SRS Flow Step 3: Validate against venue capacity
-    const currentInviteeCount = activeInviteBooking.invitees?.length || 0;
+    const batchName = inviteNameText.trim() || 'Guest';
+    const existingList = activeInviteBooking.invitees || [];
+
+    // SRS Flow Step 3: Validate against venue capacity (duplicates excluded)
+    const alreadyInvited = new Set(existingList.map(i => String(i.email || '').toLowerCase()));
+    const freshEmails = rawEmails.filter(e => !alreadyInvited.has(e));
+    const resendEmails = rawEmails.filter(e => alreadyInvited.has(e));
     const maxCapacity = activeInviteBooking.expectedAttendance || 0;
     
-    if (currentInviteeCount + rawEmails.length > maxCapacity) {
-      window.alert(`Capacity Error!\n\nYou booked this venue for a maximum of ${maxCapacity} guests. You have already invited ${currentInviteeCount} people. You cannot send ${rawEmails.length} new invitations.`);
+    if (existingList.length + freshEmails.length > maxCapacity) {
+      window.alert(`Capacity Error!\n\nYou booked this venue for a maximum of ${maxCapacity} guests. You have already invited ${existingList.length} people. You cannot add ${freshEmails.length} new guests.`);
       return;
     }
 
     setIsSendingInvites(true);
     
     try {
-      // SRS Flow Step 6: Generate unique passes and set status
-      const newInvitees: Invitee[] = rawEmails.map(email => ({
-        email: email,
-        status: 'Invited',
-        passLink: `https://azurehorizon.com/pass/${Math.random().toString(36).substring(2, 10).toUpperCase()}`
-      }));
+      // SRS Flow Step 6: Generate real signed invitation QRs (mobile-identical,
+      // validatable by staff attendee scanner on web AND mobile)
+      const newInvitees: Invitee[] = [];
+      for (const email of freshEmails) {
+        const invitation = await generateInvitationQR({
+          eventId: activeInviteBooking.id,
+          inviteeEmail: email,
+          inviteeName: batchName,
+        });
+        newInvitees.push({
+          email: invitation.inviteeEmail,
+          name: batchName,
+          inviteeName: batchName,
+          status: 'Invited',
+          passLink: '',
+          invitationId: invitation.invitationId,
+          qrCode: invitation.qrCode,
+        });
+      }
 
-      const updatedInviteesList = [...(activeInviteBooking.invitees || []), ...newInvitees];
+      // Mobile-identical dedupe: already-invited emails reuse their existing QR
+      // pass — only the reminder email is re-dispatched, no duplicate passes.
+      const resendInvitees = existingList.filter(i => resendEmails.includes(String(i.email || '').toLowerCase()));
+
+      const updatedInviteesList = [...existingList, ...newInvitees];
 
       // Save to Firestore
       const bookingRef = doc(db, 'event_bookings', activeInviteBooking.id);
-      await updateDoc(bookingRef, {
-        invitees: updatedInviteesList
-      });
+      if (newInvitees.length > 0) {
+        await updateDoc(bookingRef, {
+          invitees: updatedInviteesList
+        });
+      }
 
-      // SRS Flow Step 5: Dispatch the emails
+      // SRS Flow Step 5: Dispatch the emails (fresh invites + resend reminders)
       const displayDate = activeInviteBooking.bookingType === 'daily' && Array.isArray(activeInviteBooking.bookedDates) && activeInviteBooking.bookedDates.length > 1
         ? `${activeInviteBooking.bookedDates[0]} to ${activeInviteBooking.bookedDates[activeInviteBooking.bookedDates.length - 1]}`
-        : (activeInviteBooking.date || 'Pending Date');
+        : (activeInviteBooking.eventDateStr || activeInviteBooking.date || 'Pending Date');
+
+      const emailTargets = [
+        ...newInvitees.map(i => ({ email: i.email, qr: i.qrCode || i.passLink, name: i.name || 'Guest' })),
+        ...resendInvitees.map(i => ({ email: i.email, qr: i.qrCode || i.passLink, name: i.inviteeName || i.name || 'Guest' })),
+      ];
 
       await dispatchRealEmails(
-        newInvitees.map(i => i.email), 
-        newInvitees.map(i => i.passLink),
+        emailTargets.map(t => t.email),
+        emailTargets.map(t => t.qr),
         activeInviteBooking.venueName || 'Event Venue',
         displayDate
       );
@@ -195,9 +235,14 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
         b.id === activeInviteBooking.id ? { ...b, invitees: updatedInviteesList } : b
       ));
 
-      window.alert(`Successfully dispatched ${rawEmails.length} event invitations! Guests will receive their QR codes shortly.`);
+      const summary = [
+        freshEmails.length > 0 ? `${freshEmails.length} new invitation(s)` : null,
+        resendEmails.length > 0 ? `${resendEmails.length} reminder(s) re-sent` : null,
+      ].filter(Boolean).join(' & ');
+      window.alert(`Success! ${summary || 'No emails dispatched'}. Guests will receive their QR codes shortly.`);
       setActiveInviteBooking(null);
       setInviteEmailsText('');
+      setInviteNameText('');
 
     } catch (error) {
       console.error("Error sending invitations:", error);
@@ -240,29 +285,49 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
         <div className="space-y-6">
           {bookings.map((booking) => {
             const isDaily = booking.bookingType === 'daily';
-            
-            const totalAmt = booking.totalAmount || 0;
-            const depositAmt = booking.depositRequired || 0;
-            const venueBalance = totalAmt - depositAmt;
-            const finalBalanceOwed = venueBalance + (booking.cateringTotal || 0);
+            const money = deriveBookingPaymentState(booking);
+            const totalAmt = money.combinedTotal;
+            const depositAmt = money.depositRequired;
+            const amountPaid = money.amountPaid;
+            const finalBalanceOwed = money.balanceDue;
+            const payLabel = amountPaid > 0 ? 'Pay Balance' : 'Pay Deposit';
             
             const hasMultipleDates = Array.isArray(booking.bookedDates) && booking.bookedDates.length > 1;
             const displayDate = isDaily && hasMultipleDates && booking.bookedDates
               ? `${booking.bookedDates[0]} to ${booking.bookedDates[booking.bookedDates.length - 1]}`
-              : (booking.date || 'Pending Date');
+              : (booking.eventDateStr || booking.date || 'Pending Date');
             
             const maxCapacity = booking.expectedAttendance || 0;
             const invitesSent = booking.invitees?.length || 0;
+            const isPending = (booking.status || '').toLowerCase() === 'pending_payment';
+
+            const goPay = (mode?: string) =>
+              navigate('/payment', {
+                state: {
+                  bookingDetails: { bookingId: booking.id, expectedAttendance: maxCapacity, maxCapacity: booking.venueMaxCapacity },
+                  paymentMode: mode,
+                }
+              });
 
             return (
               <Card key={booking.id} className="overflow-hidden border-none shadow-md bg-white dark:bg-slate-900 ring-1 ring-gray-100 dark:ring-slate-800">
                 <div className="bg-[#1e3a5f] px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-xl font-bold text-white">{booking.venueName || 'Event Venue'}</h3>
                       <Badge className="bg-[#c9a227] text-white border-none hover:bg-[#b48e1f]">
                         {isDaily ? 'Full Day Hire' : 'Hourly Block'}
                       </Badge>
+                      {isPending && (
+                        <Badge className="bg-amber-500 text-white border-none hover:bg-amber-600 gap-1">
+                          <AlertCircle className="h-3 w-3" /> Pending Payment
+                        </Badge>
+                      )}
+                      {money.paymentStatus === 'paid_in_full' && (
+                        <Badge className="bg-emerald-500 text-white border-none hover:bg-emerald-600 gap-1">
+                          <CheckCircle className="h-3 w-3" /> Paid In Full
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-blue-100 text-sm mt-1 flex items-center">
                       <MapPin className="h-3 w-3 mr-1" /> Azure Horizon Resort
@@ -321,6 +386,16 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
                               style={{ width: `${Math.min(100, (invitesSent / (maxCapacity || 1)) * 100)}%` }}
                             ></div>
                           </div>
+                          {(booking.invitees || []).length > 0 && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="mt-3 text-[#1e3a5f] border-[#1e3a5f] hover:bg-[#1e3a5f]/5 gap-1.5"
+                              onClick={() => setViewPassesBooking(booking)}
+                            >
+                              <QrCode className="h-3.5 w-3.5" /> View Guest Passes ({booking.invitees!.length})
+                            </Button>
+                          )}
                         </div>
                       </div>
 
@@ -352,34 +427,64 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
                         
                         <div className="space-y-2 mb-4">
                           <div className="flex justify-between text-sm">
-                            <span className="text-gray-600 dark:text-gray-400">Venue Full Price:</span>
-                            <span className="text-gray-900 dark:text-gray-100">R {totalAmt.toLocaleString()}</span>
+                            <span className="text-gray-600 dark:text-gray-400">Venue Cost:</span>
+                            <span className="text-gray-900 dark:text-gray-100">R {money.venueCost.toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-sm">
-                            <span className="text-gray-600 dark:text-gray-400">Venue Deposit Paid:</span>
-                            <span className="text-emerald-600 font-medium">- R {depositAmt.toLocaleString()}</span>
+                            <span className="text-gray-600 dark:text-gray-400">Total Paid:</span>
+                            <span className="text-emerald-600 font-medium">- R {amountPaid.toLocaleString()}</span>
                           </div>
 
                           {booking.cateringTotal ? (
                             <div className="flex justify-between text-sm pt-1">
                               <span className="text-gray-600 dark:text-gray-400">Catering Charges:</span>
-                              <span className="text-purple-600">+ R {booking.cateringTotal.toLocaleString()}</span>
+                              <span className="text-purple-600">+ R {money.cateringTotal.toLocaleString()}</span>
                             </div>
                           ) : null}
 
-                          <div className="flex justify-between text-sm font-bold pt-3 border-t border-gray-200 dark:border-slate-700">
-                            <span className="text-gray-900 dark:text-gray-100">Total Balance Due:</span>
-                            <span className="text-amber-600">R {finalBalanceOwed.toLocaleString()}</span>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 dark:text-gray-400">Combined Total:</span>
+                            <span className="text-gray-900 dark:text-gray-100">R {totalAmt.toLocaleString()}</span>
                           </div>
+
+                          <div className="flex justify-between text-sm font-bold pt-3 border-t border-gray-200 dark:border-slate-700">
+                            <span className="text-gray-900 dark:text-gray-100">Balance Due:</span>
+                            <span className={finalBalanceOwed > 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                              R {finalBalanceOwed.toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 text-right">Status: {money.paymentStatus === 'paid_in_full' ? 'Paid in full' : money.paymentStatus === 'deposit_paid' ? 'Deposit paid' : 'No payment yet'}</p>
                         </div>
                       </div>
 
                       <div className="mt-4 flex flex-col gap-2">
+                        {finalBalanceOwed > 0 && (
+                          <Button 
+                            className="w-full bg-green-600 hover:bg-green-700 text-white transition-colors gap-2"
+                            onClick={() => goPay()}
+                          >
+                            <CreditCard className="h-4 w-4" /> {payLabel} — R {Math.min(money.balanceDue, money.amountPaid > 0 ? money.balanceDue : money.depositRequired).toLocaleString()}
+                          </Button>
+                        )}
+
+                        {!booking.cateringTotal && finalBalanceOwed >= 0 && (
+                          <Button 
+                            variant="outline" 
+                            className="w-full text-[#1e3a5f] border-[#1e3a5f] hover:bg-[#1e3a5f]/5 transition-colors gap-2"
+                            onClick={() => navigate('/event-catering', {
+                              state: { bookingId: booking.id, expectedAttendance: maxCapacity, maxCapacity: booking.venueMaxCapacity }
+                            })}
+                          >
+                            <Utensils className="h-4 w-4" /> Add Catering
+                          </Button>
+                        )}
+
                         <Button 
                           className="w-full bg-[#1e3a5f] hover:bg-[#163058] text-white transition-colors gap-2"
                           onClick={() => {
                             setActiveInviteBooking(booking);
                             setInviteEmailsText('');
+                            setInviteNameText('');
                           }}
                         >
                           <Mail className="h-4 w-4" /> Send Invitations
@@ -390,7 +495,7 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
                           className="w-full text-[#1e3a5f] border-[#1e3a5f] hover:bg-[#1e3a5f]/5 transition-colors gap-2"
                           onClick={() => handleSimulateReceipt(booking)}
                         >
-                          <Receipt className="h-4 w-4" /> Download Receipt
+                          <Receipt className="h-4 w-4" /> Receipt Summary
                         </Button>
                       </div>
                     </div>
@@ -422,11 +527,23 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
               <div className="bg-blue-50 dark:bg-slate-800 p-4 rounded-lg border border-blue-100 dark:border-slate-700 text-sm text-gray-700 dark:text-gray-300">
                 <p><strong>Venue:</strong> {activeInviteBooking.venueName}</p>
                 <p className="mt-1">
-                  <strong>Capacity Remaining:</strong> {activeInviteBooking.expectedAttendance! - (activeInviteBooking.invitees?.length || 0)} spots left out of {activeInviteBooking.expectedAttendance}.
+                  <strong>Capacity Remaining:</strong> {(activeInviteBooking.expectedAttendance || 0) - (activeInviteBooking.invitees?.length || 0)} spots left out of {activeInviteBooking.expectedAttendance || 0}.
                 </p>
                 <p className="mt-2 text-xs text-gray-500">
-                  Enter invitee email addresses below. Separate multiple emails with a comma or new line. The system will dispatch a unique pass link to each guest.
+                  Enter invitee email addresses below (comma or new line separated). Already-invited emails just get a reminder re-sent with their existing QR pass — no duplicates. A unique, staff-verifiable QR pass is dispatched to each new guest.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1.5">
+                  Guest Name <span className="text-gray-400">(shown on their QR pass)</span>
+                </label>
+                <input 
+                  className="w-full border border-gray-300 dark:border-slate-600 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-[#1e3a5f] outline-none dark:bg-slate-800 dark:text-white"
+                  placeholder="e.g. Sarah Mbeki"
+                  value={inviteNameText}
+                  onChange={(e) => setInviteNameText(e.target.value)}
+                />
               </div>
 
               <textarea 
@@ -456,6 +573,51 @@ export function MyEventBookings({ onBack }: { onBack: () => void }) {
                   )}
                   {isSendingInvites ? 'Dispatching...' : 'Send Invites'}
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GUEST PASSES MODAL — view each attendee's real signed invitation QR */}
+      {viewPassesBooking && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden max-h-[85vh] flex flex-col">
+            <div className="bg-[#1e3a5f] p-5 flex items-center justify-between shrink-0">
+              <h2 className="text-white font-bold text-lg flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-amber-400" /> Guest Passes
+              </h2>
+              <button 
+                onClick={() => setViewPassesBooking(null)}
+                className="text-white/70 hover:text-white transition-colors"
+              >
+                <XCircle className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Each pass is a signed, staff-verifiable QR code — scan it at the entrance with the Attendee Check-In scanner.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {(viewPassesBooking.invitees || []).map((invitee, idx) => (
+                  <div key={idx} className="border border-gray-200 dark:border-slate-700 rounded-xl p-4 flex items-center gap-4 bg-gray-50 dark:bg-slate-800/50">
+                    {invitee.qrCode ? (
+                      <QRCodeSVG value={invitee.qrCode} size={110} bgColor="#ffffff" fgColor="#1e3a5f" />
+                    ) : (
+                      <div className="h-[110px] w-[110px] flex items-center justify-center text-xs text-gray-400 bg-white rounded-lg border border-dashed border-gray-300">
+                        No pass yet
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{invitee.name || invitee.inviteeName || invitee.email}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{invitee.email}</p>
+                      <Badge className="mt-1 bg-emerald-100 text-emerald-800">{invitee.status}</Badge>
+                      <p className="text-[10px] text-gray-400 mt-1.5 break-all font-mono">
+                        {invitee.invitationId ? `ID: ${invitee.invitationId.slice(0, 8)}` : 'Legacy pass'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

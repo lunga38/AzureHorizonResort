@@ -1,7 +1,7 @@
 // src/types/index.ts
 
 // User Roles
-export type UserRole = 'admin' | 'guest' | 'front_desk' | 'chef' | 'waitstaff' | 'delivery' | 'maintenance' | 'tour_guide' | 'spa_staff' | null;
+export type UserRole = 'admin' | 'guest' | 'front_desk' | 'chef' | 'waitstaff' | 'delivery' | 'maintenance' | 'tour_guide' | 'spa_staff' | 'event_manager' | null;
 
 // User Interface
 export interface User {
@@ -20,6 +20,7 @@ export interface User {
 // Add these inside your User interface
   loyaltyPoints?: number;
   loyaltyTier?: 'bronze' | 'silver' | 'gold' | 'platinum';
+  heldPoints?: number; // Mobile-compatible: points locked in pending vouchers
 }
 
 // Room Types
@@ -245,15 +246,21 @@ export interface RedemptionVoucher {
   id: string;
   guestId: string;
   userEmail: string;
+  userDocId?: string; // users doc id the points are held on (mobile-compatible)
   rewardId: string;
   rewardTitle: string;
   ptsSpent?: number;
+  pointsSpent?: number; // mobile-app field alias
   voucherCode: string;
-  status: 'active' | 'redeemed' | 'expired';
+  status: 'active' | 'redeemed' | 'expired' | 'pending' | 'expired_refunded';
+  claimed?: boolean; // mobile-app field
+  claimedAt?: string;
+  claimedByStaff?: string;
   howToRedeem?: string;
   terms?: string;
   createdAt: string;
   expiresAt: string;
+  expiresAtMs?: number; // mobile-app field (24h expiry)
 }
 
 export interface LoyaltyLogEntry {

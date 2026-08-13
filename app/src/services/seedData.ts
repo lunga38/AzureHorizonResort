@@ -36,6 +36,8 @@ export const seedDatabase = async () => {
       { id: 'chris_evans', uid: 'chris_evans', name: "Chris Evans", role: "housekeeping", email: "c.evans@azurehorizon.com", status: 'staff' },
       { id: 'frikkie_louw', uid: 'frikkie_louw', name: "Frikkie Louw", role: "housekeeping", email: "f.louw@azurehorizon.com", status: 'staff' },
       { id: 'zanele_moyo', uid: 'zanele_moyo', name: "Zanele Moyo", role: "housekeeping", email: "z.moyo@azurehorizon.com", status: 'staff' },
+      { id: 'sipho_dlamini', uid: 'sipho_dlamini', name: "Sipho Dlamini", role: "event_manager", email: "s.dlamini@azurehorizon.com", status: 'staff' },
+      { id: 'lerato_molefe', uid: 'lerato_molefe', name: "Lerato Molefe", role: "event_manager", email: "l.molefe@azurehorizon.com", status: 'staff' },
     ];
 
     for (const staff of staffList) {

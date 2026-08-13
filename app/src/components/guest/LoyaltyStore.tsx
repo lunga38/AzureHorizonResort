@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   fetchRewardsFromDB, 
   listenForUserVouchers, 
   redeemRewardTransaction,
   calculateLoyaltyTier,
+  generateLoyaltyQR,
   db 
 } from '@/services/firebase-services';
 import { doc, onSnapshot } from 'firebase/firestore';
 import type { RewardItem, RedemptionVoucher, User as AppUser } from '@/types';
+import { QRCodeSVG } from 'qrcode.react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { 
   ChevronLeft, Gift, Search, Ticket, Check, 
   Copy, AlertCircle, Sparkles, Calendar, Info, 
-  CheckCircle2, Loader2 
+  CheckCircle2, Loader2, QrCode
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 
@@ -33,7 +35,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     pts: 100,
     minTier: 'Bronze',
     tierRank: 1,
-    howToRedeem: 'Present this code to your waiter during dining.',
+    howToRedeem: 'Automatically applied - no staff verification needed. Your dessert is added to your dining bill at no cost.',
     terms: 'Valid on main course orders over R150.',
     validityDays: 30,
     isActive: true,
@@ -44,7 +46,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     pts: 300,
     minTier: 'Silver',
     tierRank: 2,
-    howToRedeem: 'Inform the front desk upon check-in with your voucher code.',
+    howToRedeem: 'Automatically applied - your reservation checkout time is extended to 2:00 PM at no cost. No staff approval needed.',
     terms: 'Subject to room availability on departure day.',
     validityDays: 30,
     isActive: true,
@@ -55,7 +57,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     pts: 500,
     minTier: 'Gold',
     tierRank: 3,
-    howToRedeem: 'Present voucher at the spa reception prior to treatment.',
+    howToRedeem: 'Automatically applied - your 30-minute treatment is pre-paid and confirmed when you book at the spa.',
     terms: 'Advance reservation required.',
     validityDays: 30,
     isActive: true,
@@ -66,7 +68,7 @@ const DEFAULT_REWARDS: RewardItem[] = [
     pts: 1000,
     minTier: 'Platinum',
     tierRank: 4,
-    howToRedeem: 'Contact reservations prior to arrival to confirm availability.',
+    howToRedeem: 'Automatically applied - your reservation is upgraded to an Executive Suite at no cost. No staff approval needed.',
     terms: 'Valid for stays of 2 nights or more.',
     validityDays: 60,
     isActive: true,
@@ -86,6 +88,12 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
   
   // Live Database Points Sync state
   const [livePoints, setLivePoints] = useState<number | null>(null);
+  const [liveHeldPoints, setLiveHeldPoints] = useState<number | null>(null);
+
+  // Member QR state (rotating, mobile-compatible)
+  const [showMemberQR, setShowMemberQR] = useState(false);
+  const [memberQRPayload, setMemberQRPayload] = useState<string | null>(null);
+  const [memberQRGenerating, setMemberQRGenerating] = useState(false);
 
   // Modals state
   const [confirmReward, setConfirmReward] = useState<RewardItem | null>(null);
@@ -95,7 +103,10 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   // Live points fallback chain: Firestore Live State -> Auth Context State -> 0
-  const points = livePoints !== null ? livePoints : (currentUser?.loyaltyPoints || 0);
+  const totalPoints = livePoints !== null ? livePoints : (currentUser?.loyaltyPoints || 0);
+  const heldPoints = liveHeldPoints !== null ? liveHeldPoints : (currentUser?.heldPoints || 0);
+  // Mobile-compatible: only points NOT held in pending vouchers are available to spend
+  const points = Math.max(0, totalPoints - heldPoints);
   
   // Always calculate effective tier dynamically from points balance
   const effectiveTier = calculateLoyaltyTier(points);
@@ -112,6 +123,11 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
         const data = docSnap.data();
         if (typeof data.loyaltyPoints === 'number') {
           setLivePoints(data.loyaltyPoints);
+        }
+        if (typeof data.heldPoints === 'number') {
+          setLiveHeldPoints(data.heldPoints);
+        } else {
+          setLiveHeldPoints(0);
         }
       }
     }, (error) => {
@@ -156,6 +172,37 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
+  // Build the exact voucher QR payload used by the mobile app (UC22) so a web
+  // voucher scans identically in the mobile staff loyalty scanner.
+  const buildVoucherQRPayload = (v: RedemptionVoucher) => JSON.stringify({
+    voucherCode: v.voucherCode,
+    rewardTitle: v.rewardTitle,
+    guestId: v.guestId,
+    guestName: currentUser?.name || 'Guest',
+    pts: v.ptsSpent,
+    issuedAt: new Date().toISOString(),
+  });
+
+  const refreshMemberQR = useCallback(async () => {
+    setMemberQRGenerating(true);
+    try {
+      const { qrPayload } = await generateLoyaltyQR();
+      setMemberQRPayload(JSON.stringify(qrPayload));
+    } catch (err) {
+      console.error('Failed to generate member QR:', err);
+      setMemberQRPayload(null);
+    } finally {
+      setMemberQRGenerating(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showMemberQR) return;
+    refreshMemberQR();
+    const interval = setInterval(refreshMemberQR, 30000); // rotate every 30s (mobile-compatible)
+    return () => clearInterval(interval);
+  }, [showMemberQR, refreshMemberQR]);
+
   const handleRedeemClick = (reward: RewardItem) => {
     if (points < reward.pts) {
       setLockedRewardAlert(reward);
@@ -179,7 +226,7 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
     setIsProcessing(true);
 
     try {
-      const { newPoints, voucher } = await redeemRewardTransaction(
+      const { heldPoints: newHeldPoints, voucher } = await redeemRewardTransaction(
         userEmail,
         guestId,
         confirmReward,
@@ -187,11 +234,13 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
       );
 
       // Update local state immediately & sync context user
-      setLivePoints(newPoints);
+      // loyaltyPoints stays unchanged — the spend is now HELD until staff scans the voucher QR
+      setLiveHeldPoints(newHeldPoints);
       const updatedUser: AppUser = {
         ...currentUser,
-        loyaltyPoints: newPoints,
-        loyaltyTier: calculateLoyaltyTier(newPoints),
+        loyaltyPoints: livePoints !== null ? livePoints : currentUser?.loyaltyPoints,
+        heldPoints: newHeldPoints,
+        loyaltyTier: calculateLoyaltyTier(livePoints !== null ? livePoints : (currentUser?.loyaltyPoints || 0)),
       };
       login(updatedUser);
 
@@ -248,7 +297,18 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
           <div className="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/10 text-center shrink-0 min-w-[160px]">
             <p className="text-xs text-amber-200 uppercase font-semibold">Your Tier</p>
             <p className="text-xl font-bold capitalize mt-0.5">{userTier}</p>
-            <p className="text-[10px] text-white/70 mt-1">{points} Total Points</p>
+            <p className="text-[10px] text-white/70 mt-1">{points} Available Points</p>
+            {heldPoints > 0 && (
+              <p className="text-[10px] text-white/50 mt-0.5">{heldPoints} held in pending vouchers</p>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-3 bg-white/15 hover:bg-white/25 text-white text-xs gap-1"
+              onClick={() => setShowMemberQR(true)}
+            >
+              <QrCode className="h-3.5 w-3.5" /> Show My QR
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -390,17 +450,25 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
                       <div>
                         <Badge
                           className={
-                            v.status === 'active'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-gray-100 text-gray-600'
+                            v.status === 'pending'
+                              ? 'bg-amber-100 text-amber-800'
+                              : v.status === 'redeemed'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-gray-100 text-gray-600'
                           }
                         >
-                          {v.status.toUpperCase()}
+                          {v.status === 'pending' ? 'PENDING · SCAN TO REDEEM' : v.status.toUpperCase()}
                         </Badge>
                         <h4 className="font-bold text-gray-900 text-base mt-2">{v.rewardTitle}</h4>
                       </div>
                       <span className="text-xs font-mono font-bold text-gray-400">{v.ptsSpent} pts</span>
                     </div>
+
+                    {v.status === 'pending' && (
+                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 flex items-center justify-center">
+                        <QRCodeSVG value={buildVoucherQRPayload(v)} size={150} bgColor="#ffffff" fgColor="#1e3a5f" />
+                      </div>
+                    )}
 
                     <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 flex items-center justify-between">
                       <div>
@@ -419,8 +487,13 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
                     <div className="text-xs text-gray-500 space-y-1">
                       <p className="flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                        Expires: {new Date(v.expiresAt).toLocaleDateString()}
+                        Expires: {v.expiresAtMs ? new Date(v.expiresAtMs).toLocaleDateString() : new Date(v.expiresAt).toLocaleDateString()}
                       </p>
+                      {v.status === 'pending' && (
+                        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                          Present this QR to any staff member to redeem. Your {v.ptsSpent} pts are held until the staff scan.
+                        </p>
+                      )}
                       <p className="flex items-start gap-1">
                         <Info className="h-3.5 w-3.5 text-gray-400 mt-0.5 shrink-0" />
                         <span>{v.howToRedeem}</span>
@@ -529,16 +602,19 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
         <DialogContent className="sm:max-w-md text-center">
           <DialogHeader>
             <DialogTitle className="text-2xl font-serif text-[#c9a227] text-center flex items-center justify-center gap-2">
-              <CheckCircle2 className="h-6 w-6 text-emerald-600" /> Voucher Generated!
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" /> Reward Purchased!
             </DialogTitle>
             <DialogDescription className="text-center">
-              Your voucher code is ready to use.
+              {activeVoucherModal?.ptsSpent} pts are now held in this voucher. Show this QR (or the code) to any staff member to redeem your reward.
             </DialogDescription>
           </DialogHeader>
 
           {activeVoucherModal && (
             <div className="py-4 space-y-4">
-              <div className="bg-gray-50 p-6 rounded-2xl border-2 border-dashed border-gray-300">
+              <div className="bg-gray-50 p-6 rounded-2xl border-2 border-dashed border-gray-300 space-y-3">
+                <div className="flex justify-center">
+                  <QRCodeSVG value={buildVoucherQRPayload(activeVoucherModal)} size={180} bgColor="#ffffff" fgColor="#1e3a5f" />
+                </div>
                 <p className="text-xs uppercase tracking-widest text-gray-400 mb-1">Voucher Code</p>
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-3xl font-mono font-bold text-[#1e3a5f] tracking-wider">
@@ -559,6 +635,31 @@ export function LoyaltyStore({ onBack }: LoyaltyStoreProps) {
           <Button onClick={() => setActiveVoucherModal(null)} className="w-full bg-[#1e3a5f] text-white">
             Done
           </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* MEMBER QR DIALOG (mobile-compatible, rotates every 30s) */}
+      <Dialog open={showMemberQR} onOpenChange={setShowMemberQR}>
+        <DialogContent className="sm:max-w-sm text-center">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-serif text-[#1e3a5f] text-center">Your Loyalty QR</DialogTitle>
+            <DialogDescription className="text-center">
+              Staff scan this to look up your profile and award/check points. Refreshes every 30 seconds.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 flex flex-col items-center gap-3">
+            {memberQRGenerating || !memberQRPayload ? (
+              <div className="h-[220px] w-[220px] flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-[#c9a227]" />
+              </div>
+            ) : (
+              <QRCodeSVG value={memberQRPayload} size={220} bgColor="#ffffff" fgColor="#1e3a5f" />
+            )}
+            <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <p className="font-semibold text-gray-700">{currentUser?.name}</p>
+              <p className="text-[10px]">{points} available pts · {userTier} tier</p>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

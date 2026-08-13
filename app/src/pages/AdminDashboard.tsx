@@ -16,14 +16,15 @@ import { TourCheckIn } from '@/components/admin/TourCheckIn';
 import { ReviewManager } from '@/components/admin/ReviewManager';
 import { AdminRefundReview } from '@/components/admin/AdminRefundReview'; 
 import { DamageClaimResolutionPage } from '@/components/admin/DamageClaimResolutionPage'; // 🚨 Added Damage Claims component
+import { StaffQRTools } from '@/pages/StaffQRTools';
 
 import { 
   TrendingUp, Users, Hotel, DollarSign, AlertCircle, BarChart3,
   Download, Star, Building2, Loader2, Compass, UserCheck,
-  LayoutDashboard, Sparkles, MessageSquare, Gavel
+  LayoutDashboard, Sparkles, MessageSquare, Gavel, ScanLine
 } from 'lucide-react';
 
-type AdminTab = 'overview' | 'tour-management' | 'tour-checkin' | 'reviews' | 'refunds' | 'damage-claims';
+type AdminTab = 'overview' | 'tour-management' | 'tour-checkin' | 'reviews' | 'refunds' | 'damage-claims' | 'qr-tools';
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: 'overview',         label: 'Executive Overview',  icon: LayoutDashboard },
@@ -32,6 +33,7 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: 'reviews',          label: 'Guest Reviews',       icon: MessageSquare },
   { id: 'refunds',          label: 'Refund Requests',     icon: DollarSign },
   { id: 'damage-claims',    label: 'Damage Claims',       icon: Gavel }, // 🚨 Added Tab link
+  { id: 'qr-tools',         label: 'QR Tools',            icon: ScanLine },
 ];
 
 export function AdminDashboard() {
@@ -432,6 +434,7 @@ export function AdminDashboard() {
         {activeTab === 'reviews' && <ReviewManager />}
         {activeTab === 'refunds' && <AdminRefundReview />}
         {activeTab === 'damage-claims' && <DamageClaimResolutionPage />} {/* 🚨 Render Damage Claims page */}
+        {activeTab === 'qr-tools' && <StaffQRTools />}
         
       </div>
 

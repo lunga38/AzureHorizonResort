@@ -21,6 +21,7 @@ export default function PaymentWeb() {
     checkIn,
     expectedAttendance,
     bookingId,
+    maxCapacity,
     bookingType // Extracted to conditionally route catering
   } = location.state || {};
   
@@ -65,7 +66,7 @@ export default function PaymentWeb() {
 
       if (wantsCatering) {
         navigate('/event-catering', { 
-          state: { expectedAttendance, bookingId } 
+          state: { expectedAttendance, bookingId, maxCapacity } 
         });
         return; // Stop execution here so it doesn't run the code below
       }

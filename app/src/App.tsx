@@ -12,13 +12,13 @@ import { MaintenancePortal } from '@/pages/MaintenancePortal';
 import { AdminDashboard } from '@/pages/AdminDashboard';
 import { TourGuideDashboard } from '@/pages/TourGuideDashboard';
 import { SpaDashboard } from '@/pages/SpaDashboard';
+import { EventManagerDashboard } from '@/pages/EventManagerDashboard';
 import { RegistrationPage } from '@/pages/RegistrationPage';
 
 // Import Pages & Components
 import { PaymentPage } from '@/components/guest/PaymentPage'; 
 import EventCatering from '@/components/guest/EventCatering';
 import EventBooking from '@/components/guest/EventBooking';
-import { DamageInspectionPage } from '@/components/maintenance/DamageInspectionPage';
 import { DamageClaimResolutionPage } from '@/components/admin/DamageClaimResolutionPage';
 
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,7 @@ function DashboardRouter() {
     case 'delivery': return <ServiceDashboard />;
     case 'tour_guide': return <TourGuideDashboard />;
     case 'spa_staff': return <SpaDashboard />;
+    case 'event_manager': return <EventManagerDashboard />;
     default: return <Navigate to="/" />;
   }
 }
@@ -138,9 +139,7 @@ function RoleBasedRoute() {
           <Route path="/event-booking" element={<EventBooking />} />
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/event-catering" element={<EventCatering />} />
-
-          {/* Maintenance Routes */}
-          <Route path="/damage-inspection" element={<DamageInspectionPage />} />
+          <Route path="/event-manager" element={<EventManagerDashboard />} />
 
           {/* Admin Routes */}
           <Route path="/damage-claims" element={<DamageClaimResolutionPage />} />
