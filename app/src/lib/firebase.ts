@@ -3,7 +3,6 @@ import { getAuth } from "firebase/auth";
 import { initializeFirestore, memoryLocalCache } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
-import { getAnalytics } from "firebase/analytics";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -30,18 +29,6 @@ if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
 const app = initializeApp(firebaseConfig);
 
 // Exported services for use in your components and services
-// Analytics is lazy + guarded: it throws at module load when config is missing/incomplete,
-// which white-screened the whole app. Missing analytics must never block the app.
-export const analytics = getAnalyticsSafely();
-function getAnalyticsSafely() {
-  try {
-    return getAnalytics(app);
-  } catch (e) {
-    console.warn("Firebase Analytics disabled:", (e as Error).message);
-    return null;
-  }
-}
-
 export const auth = getAuth(app);
 
 // 🚨 THE FIX: Explicitly force Firestore to run strictly in memory. 
