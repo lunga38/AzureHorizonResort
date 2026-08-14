@@ -327,6 +327,7 @@ export const seedDatabase = async () => {
         eventType: 'Gala Dinner', bookingType: 'hourly', startTime: '18:00', duration: 5,
         totalAmount: 125000, depositRequired: 62500, termsAccepted: true,
         status: 'paid', imageUrl: IMG.ballroom,
+        preInspectionStatus: 'completed', inspectionStatus: 'passed',
         createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
       },
       {
@@ -382,7 +383,43 @@ export const seedDatabase = async () => {
         eventType: 'Corporate Conference', bookingType: 'daily',
         totalAmount: 175000, depositRequired: 87500, termsAccepted: true,
         status: 'paid', imageUrl: IMG.ballroom,
+        preInspectionStatus: 'completed', inspectionStatus: 'passed', postInspectionStatus: 'completed', damageRecorded: true,
         createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1007',
+        guestId: 'thembi_nkosi', guestName: 'Thembi Nkosi',
+        venueId: 'v-garden-terrace', venueName: 'Botanical Garden Terrace', venueMaxCapacity: 80,
+        eventDate: isoFor(dayStr(1), '10:00'), date: dayStr(1), eventDateStr: dayStr(1),
+        bookedDates: [dayStr(1)], expectedAttendance: 40,
+        eventType: 'Charity Breakfast', bookingType: 'hourly', startTime: '10:00', duration: 3,
+        totalAmount: 36000, depositRequired: 18000, termsAccepted: true,
+        status: 'confirmed', imageUrl: IMG.gardenTerrace,
+        createdAt: new Date(Date.now() - 4 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1008',
+        guestId: 'ndidi_emecheta', guestName: 'Ndidi Emecheta',
+        venueId: 'v-beach-pavilion', venueName: 'Sunset Beach Pavilion', venueMaxCapacity: 150,
+        eventDate: isoFor(dayStr(-1), '17:00'), date: dayStr(-1), eventDateStr: dayStr(-1),
+        bookedDates: [dayStr(-1)], expectedAttendance: 55,
+        eventType: 'Sunset Cocktail Reception', bookingType: 'hourly', startTime: '17:00', duration: 4,
+        totalAmount: 60000, depositRequired: 30000, termsAccepted: true,
+        status: 'paid', imageUrl: IMG.beachPavilion,
+        preInspectionStatus: 'completed', inspectionStatus: 'passed', postInspectionStatus: 'completed',
+        createdAt: new Date(Date.now() - 6 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1009',
+        guestId: 'marta_costa', guestName: 'Marta Costa',
+        venueId: 'v-ashanti-estate', venueName: 'Ashanti Estate', venueMaxCapacity: 300,
+        eventDate: isoFor(dayStr(-3), '12:00'), date: dayStr(-3), eventDateStr: dayStr(-3),
+        bookedDates: [dayStr(-3)], expectedAttendance: 120,
+        eventType: 'Birthday Celebration', bookingType: 'daily',
+        totalAmount: 96000, depositRequired: 48000, termsAccepted: true,
+        status: 'paid', imageUrl: IMG.estate,
+        preInspectionStatus: 'completed', inspectionStatus: 'passed', postInspectionStatus: 'completed', damageRecorded: true, damagePenaltyTotal: 18500, damageInspectionId: 'INSP-DMG-EV1009',
+        createdAt: new Date(Date.now() - 9 * 86400000).toISOString(),
       },
     ];
 
@@ -559,7 +596,278 @@ export const seedDatabase = async () => {
     }
     console.log(`✅ Added ${demoDamage.length} demo damage records with photo evidence`);
 
-    alert("✅ System Initialized Successfully with 200 rooms, 6 fresh events, signed QR invitations and online images!");
+    // ==========================================
+    // 14. EVENT INSPECTIONS (pre + post history)
+    // Matches the mobile createEventInspection shape
+    // so event-ops / post-inspection history renders.
+    // ==========================================
+    const demoInspections = [
+      {
+        id: 'INSP-PRE-EV1001',
+        eventId: 'EV-1001',
+        type: 'pre_event',
+        inspectorId: 'sipho_dlamini',
+        inspectorName: 'Sipho Dlamini',
+        checklistItems: [
+          { item: 'Room layout matches floor plan', status: 'passed' },
+          { item: 'Seating count matches guest list', status: 'passed' },
+          { item: 'Lighting system fully operational', status: 'passed' },
+          { item: 'AV equipment tested & working', status: 'passed' },
+          { item: 'Microphones tested', status: 'passed' },
+          { item: 'Projector/screen aligned & calibrated', status: 'passed' },
+          { item: 'Climate control set to correct temperature', status: 'passed' },
+          { item: 'Emergency exits clear & signage visible', status: 'passed' },
+          { item: 'Catering tables positioned correctly', status: 'passed' },
+          { item: 'Decorations match client brief', status: 'passed' },
+          { item: 'Flooring clean & free of hazards', status: 'passed' },
+          { item: 'Registration desk set up', status: 'passed' },
+        ],
+        overallStatus: 'approved',
+        completedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      },
+      {
+        id: 'INSP-PRE-EV1007',
+        eventId: 'EV-1007',
+        type: 'pre_event',
+        inspectorId: 'sipho_dlamini',
+        inspectorName: 'Sipho Dlamini',
+        checklistItems: [
+          { item: 'Room layout matches floor plan', status: 'passed' },
+          { item: 'Seating count matches guest list', status: 'passed' },
+          { item: 'Lighting system fully operational', status: 'passed' },
+          { item: 'AV equipment tested & working', status: 'passed' },
+          { item: 'Microphones tested', status: 'needs_attention', notes: 'Spare microphone battery low' },
+          { item: 'Projector/screen aligned & calibrated', status: 'passed' },
+          { item: 'Climate control set to correct temperature', status: 'passed' },
+          { item: 'Emergency exits clear & signage visible', status: 'passed' },
+          { item: 'Catering tables positioned correctly', status: 'passed' },
+          { item: 'Decorations match client brief', status: 'passed' },
+          { item: 'Flooring clean & free of hazards', status: 'passed' },
+          { item: 'Registration desk set up', status: 'passed' },
+        ],
+        overallStatus: 'needs_attention',
+        completedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      },
+      {
+        id: 'INSP-POST-EV1006',
+        eventId: 'EV-1006',
+        type: 'post_event',
+        inspectorId: 'sipho_dlamini',
+        inspectorName: 'Sipho Dlamini',
+        checklistItems: [
+          { item: 'Venue left in clean condition', status: 'passed' },
+          { item: 'Furniture returned to standard layout', status: 'passed' },
+          { item: 'AV equipment accounted for', status: 'passed' },
+          { item: 'Regulatory checklists completed', status: 'passed' },
+          { item: 'Damage flagged & documented', status: 'passed' },
+        ],
+        overallStatus: 'approved',
+        completedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      },
+      {
+        id: 'INSP-POST-EV1008',
+        eventId: 'EV-1008',
+        type: 'post_event',
+        inspectorId: 'lerato_molefe',
+        inspectorName: 'Lerato Molefe',
+        checklistItems: [
+          { item: 'Venue left in clean condition', status: 'passed' },
+          { item: 'Furniture returned to standard layout', status: 'passed' },
+          { item: 'AV equipment accounted for', status: 'passed' },
+          { item: 'Regulatory checklists completed', status: 'passed' },
+          { item: 'Damage flagged & documented', status: 'na' },
+        ],
+        overallStatus: 'approved',
+        completedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      },
+      {
+        id: 'INSP-POST-EV1009',
+        eventId: 'EV-1009',
+        type: 'post_event',
+        inspectorId: 'sipho_dlamini',
+        inspectorName: 'Sipho Dlamini',
+        checklistItems: [
+          { item: 'Venue left in clean condition', status: 'failed' },
+          { item: 'Furniture returned to standard layout', status: 'passed' },
+          { item: 'AV equipment accounted for', status: 'passed' },
+          { item: 'Regulatory checklists completed', status: 'failed' },
+          { item: 'Damage flagged & documented', status: 'failed' },
+        ],
+        overallStatus: 'needs_attention',
+        completedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+      },
+    ];
+    for (const insp of demoInspections) {
+      await setDoc(doc(db, 'event_inspections', insp.id), insp);
+    }
+    console.log(`✅ Added ${demoInspections.length} event inspection records`);
+
+    // ==========================================
+    // 15. EXTRA DAMAGE RECORD (EV-1009, resolved-style)
+    // ==========================================
+    await setDoc(doc(db, 'damage_records', 'DMG-1003'), {
+      id: 'DMG-1003',
+      eventId: 'EV-1009',
+      bookingRef: 'EV-1009',
+      guestId: 'marta_costa',
+      guestEmail: 'guest7@example.com',
+      venueId: 'v-ashanti-estate',
+      venueName: 'Ashanti Estate',
+      eventDate: isoFor(dayStr(-3), '12:00'),
+      expectedAttendance: 120,
+      inspectorId: 'sipho_dlamini',
+      inspectorName: 'Sipho Dlamini',
+      inspectorEmail: 's.dlamini@azurehorizon.com',
+      assignedTechnicianId: 'kevin_dupreez',
+      updatedByEmail: 's.dlamini@azurehorizon.com',
+      items: [
+        {
+          item: 'Outdoor Patio Umbrellas',
+          assetName: 'Outdoor Patio Umbrellas',
+          category: 'Grounds & Outdoor',
+          condition: 'damaged',
+          description: 'Two umbrellas torn and one pole bent during a windy reception.',
+          estimatedCost: 8500,
+          photo: u('photo-1504384308090-c894fdcc538d'),
+          photoName: 'umbrella-damage.jpg',
+        },
+        {
+          item: 'Garden Pathway Lighting',
+          assetName: 'Garden Pathway Lighting',
+          category: 'Grounds & Outdoor',
+          condition: 'damaged',
+          description: 'Three pathway light casings cracked from heavy foot traffic.',
+          estimatedCost: 10000,
+          photo: u('photo-1519710164239-da123dc03ef4'),
+          photoName: 'path-lighting-damage.jpg',
+        },
+      ],
+      generalNotes: 'Guest accepted liability. Repairs scheduled with maintenance.',
+      totalCost: 18500,
+      status: 'in_repair',
+      inspectionId: 'INSP-POST-EV1009',
+      damageFlagged: true,
+      createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+      updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      photos: [u('photo-1504384308090-c894fdcc538d'), u('photo-1519710164239-da123dc03ef4')],
+    });
+
+    // ==========================================
+    // 16. REFUND REQUESTS (admin queue)
+    // ==========================================
+    const demoRefunds = [
+      {
+        id: 'REF-1001',
+        eventId: 'EV-1002',
+        bookingRef: 'EV-1002',
+        guestId: 'amara_okafor',
+        guestName: 'Amara Okafor',
+        guestEmail: 'guest3@example.com',
+        reason: 'Shoreline forecast predicts heavy rain; hosting the beach party is not feasible.',
+        requestedAmount: 45000,
+        totalPaidAmount: 90000,
+        status: 'pending',
+        proofImages: [u('photo-1507525428034-b723cf961d3e')],
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      },
+      {
+        id: 'REF-1002',
+        eventId: 'EV-1005',
+        bookingRef: 'EV-1005',
+        guestId: 'jacobus_van_der_merwe',
+        guestName: 'Jacobus van der Merwe',
+        guestEmail: 'guest6@example.com',
+        reason: 'Asked for full refund after finding a cheaper venue. No deposit paid yet.',
+        requestedAmount: 22500,
+        totalPaidAmount: 0,
+        status: 'declined',
+        proofImages: [],
+        createdAt: new Date(Date.now() - 4 * 86400000).toISOString(),
+        reviewedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+      },
+    ];
+    for (const rf of demoRefunds) {
+      await setDoc(doc(db, 'refund_requests', rf.id), rf);
+    }
+    console.log(`✅ Added ${demoRefunds.length} refund requests`);
+
+    // ==========================================
+    // 17. LIVE COMPLAINTS (guest relations feed)
+    // ==========================================
+    const demoComplaints = [
+      {
+        eventId: 'EV-1001',
+        guestId: 'guest_001',
+        guestName: 'Thandi Mokoena',
+        category: 'noise',
+        location: 'Grand Ocean Ballroom',
+        description: 'Volume of the live band is too loud near the entrance where I was seated.',
+        urgency: 'medium',
+        photos: [],
+        status: 'open',
+        createdAt: new Date(Date.now() - 5 * 3600000).toISOString(),
+      },
+      {
+        eventId: 'EV-1001',
+        guestId: 'guest_005',
+        guestName: 'Priya Naidoo',
+        category: 'service',
+        location: 'Grand Ocean Ballroom',
+        description: 'Cocktail service was slow during the first hour of the reception.',
+        urgency: 'low',
+        photos: [],
+        status: 'open',
+        createdAt: new Date(Date.now() - 2 * 3600000).toISOString(),
+      },
+      {
+        eventId: 'EV-1006',
+        guestId: 'guest_003',
+        guestName: 'Lerato Maseko',
+        category: 'facility',
+        location: 'Grand Ocean Ballroom',
+        description: 'One of the breakout rooms had a flickering light; noted it at the front desk.',
+        urgency: 'medium',
+        photos: [],
+        status: 'resolved',
+        createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+        updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+      },
+    ];
+    for (const comp of demoComplaints) {
+      await addDoc(collection(db, 'live_complaints'), comp);
+    }
+    console.log(`✅ Added ${demoComplaints.length} live complaints`);
+
+    // ==========================================
+    // 18. EVENT FEEDBACK (UC32 — past event)
+    // Mirrors mobile submitEventFeedback (+ its
+    // mirrored 'reviews' entry so Leave Review shows it).
+    // ==========================================
+    await addDoc(collection(db, 'event_feedback'), {
+      eventId: 'EV-1006',
+      guestId: 'sanjay_gupta',
+      guestName: 'Sanjay Gupta',
+      ratings: { venue: 5, catering: 4, staff: 5, setup: 4 },
+      comments: 'Excellent conference venue, well organised. Catering could do with more vegetarian variety.',
+      submittedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    });
+    await addDoc(collection(db, 'reviews'), {
+      guestId: 'sanjay_gupta',
+      guestName: 'Sanjay Gupta',
+      category: 'event',
+      rating: 5,
+      comments: 'Excellent conference venue, well organised. Catering could do with more vegetarian variety.',
+      eventId: 'EV-1006',
+      helpful: 8,
+      createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    });
+
+    alert("✅ System Initialized Successfully with 200 rooms, 9 fresh events, signed QR invitations and online images!");
   } catch (err) {
     console.error(err);
     alert("Seeding failed. Check console for details.");
