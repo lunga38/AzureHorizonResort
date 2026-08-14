@@ -101,6 +101,39 @@ const getLocalDate = (iso?: string) => {
   }
 };
 
+// Downscale + re-encode photos to a small JPEG data-URL before persisting.
+// Raw camera files (HEIC/HEIF) and multi-MB base64 strings decode fine in
+// browsers but FAIL in React Native's Android image decoder, which is why
+// staff phones showed "Unavailable" for web-uploaded proof photos.
+const MAX_DIMENSION = 1280;
+const JPEG_QUALITY = 0.75;
+
+const compressImageToJpeg = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, MAX_DIMENSION / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject(new Error('Canvas 2D context unavailable'));
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to decode image'));
+      img.src = String(reader.result || '');
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
 export function EventManagerDashboard() {
   const { user } = useAuth();
 
@@ -181,14 +214,21 @@ export function EventManagerDashboard() {
     }));
   };
 
-  const handlePhotoUpload = (assetId: string, file: File | null) => {
+  const handlePhotoUpload = async (assetId: string, file: File | null) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      updateFlaggedDetail(assetId, 'photo', String(reader.result || ''));
+    try {
+      const dataUrl = await compressImageToJpeg(file);
+      updateFlaggedDetail(assetId, 'photo', dataUrl);
       updateFlaggedDetail(assetId, 'photoName', file.name);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Fall back to the raw data URL if compression fails
+      const reader = new FileReader();
+      reader.onload = () => {
+        updateFlaggedDetail(assetId, 'photo', String(reader.result || ''));
+        updateFlaggedDetail(assetId, 'photoName', file.name);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = async () => {

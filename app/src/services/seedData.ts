@@ -3,12 +3,57 @@ import { doc, setDoc, collection, addDoc } from 'firebase/firestore';
 import { ref, set } from 'firebase/database';
 import { seedTables } from './tableSeedData';
 
+// ==========================================
+// ONLINE IMAGE LIBRARY (Unsplash CDN)
+// Stored in Firestore/RTDB so both web AND the
+// mobile app can render them from anywhere.
+// ==========================================
+const u = (id: string, w = 1200) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=70`;
+
+const IMG = {
+  oceanSuite: [u('photo-1582719478250-c89cae4dc85b'), u('photo-1566073771259-6a8506099945'), u('photo-1584132967334-10e028bd69f7'), u('photo-1512918728675-ed5a9ecdebfd')],
+  gardenSuite: [u('photo-1611892440504-42a792e24d32'), u('photo-1560185893-a55cbc8c57e8'), u('photo-1578683010236-d716f9a3f461')],
+  heritageSuite: [u('photo-1590490360182-c33d57733427'), u('photo-1505693416388-ac5ce068fe85'), u('photo-1519710164239-da123dc03ef4')],
+  familyVilla: [u('photo-1584622650111-993a426fbf0a'), u('photo-1493809842364-78817add7ffb'), u('photo-1598928506311-c55ded91a20c')],
+  penthouse: [u('photo-1512917774080-9991f1c4c750'), u('photo-1520333789090-1afc82db536a'), u('photo-1545324418-cc1a3fa10c00'), u('photo-1600607687939-ce8a6c25118c')],
+  ballroom: u('photo-1519167758481-83f550bb49b3'),
+  estate: u('photo-1600585154340-be6161a56a0c'),
+  vineyard: u('photo-1528823872057-9c018a7a7553'),
+  beachPavilion: u('photo-1507525428034-b723cf961d3e'),
+  gardenTerrace: u('photo-1416879595882-3373a0480b5b'),
+  foodTartare: u('photo-1546069901-ba9599a7e63c'),
+  foodOysters: u('photo-1559742811-822873691df8'),
+  foodSteak: u('photo-1546964124-0cce460f38ef'),
+  foodLobster: u('photo-1615141982883-c7ad0e69fd62'),
+  foodRisotto: u('photo-1476124369491-e7addf5db371'),
+  foodCake: u('photo-1606313564200-e75d5e30476c'),
+  foodCocktail: u('photo-1546171753-97d7676e4602'),
+  foodWine: u('photo-1510812431401-41d2bd2722f3'),
+};
+
+// Local date helpers (matches web EventBooking's getLocalISODate)
+const localISODate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const todayStr = localISODate(new Date());
+const dayStr = (offset: number) => localISODate(new Date(Date.now() + offset * 86400000));
+const isoFor = (day: string, time = '10:00') => `${day}T${time}:00.000Z`;
+
+// QR signing — MUST match the mobile app (firebase-services.ts):
+// hex SHA-256 of (secret + JSON.stringify(payload)) with payload key order:
+// invitationId, eventId, inviteeEmail, inviteeName, hostId, status, issuedAt
+const QR_SIGNING_SECRET = "azure-horizon-demo-signing-secret-2026";
+const sha256Hex = async (text: string): Promise<string> => {
+  const enc = new TextEncoder();
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
 export const seedDatabase = async () => {
   try {
     alert("Starting database initialization...");
 
     // ==========================================
-    // 1. STAFF ACCOUNTS (25)
+    // 1. STAFF ACCOUNTS (27)
     // ==========================================
     const staffList = [
       { id: 'bandile_maqeda', uid: 'bandile_maqeda', name: "Bandile Maqeda", role: "admin", email: "admin@azurehorizon.com", status: 'staff' },
@@ -77,17 +122,17 @@ export const seedDatabase = async () => {
     console.log(`✅ Added ${guests.length} guest accounts`);
 
     // ==========================================
-    // 3. ROOMS (200 rooms programmatic)
+    // 3. ROOMS (200 rooms programmatic, online images)
     // ==========================================
     const rooms = [];
     const baseTypes = [
-      { prefix: '1', type: 'ocean_view', name: 'Oceanic Executive Suite', price: 4200, capacity: 2, amenities: ['King Bed', 'Ocean View', 'WiFi', 'Mini Bar', 'Room Service', 'Private Balcony', 'Walk-in Shower'], images: ['/rooms/ocean-suite.png', '/rooms/ocean-suite-bedroom.jpg', '/rooms/ocean-suite-bathroom.jpg', '/rooms/ocean-suite-balcony.jpg'] },
-      { prefix: '2', type: 'garden', name: 'Coral Garden Terrace', price: 2800, capacity: 2, amenities: ['Queen Bed', 'Garden View', 'WiFi', 'Patio', 'Outdoor Seating', 'Rain Shower'], images: ['/rooms/garden-terrace-bedroom.jpg', '/rooms/garden-terrace-patio.jpg', '/rooms/garden-terrace-garden.png'] },
-      { prefix: '3', type: 'family', name: 'Heritage Suite', price: 6200, capacity: 4, amenities: ['King Bed', 'Living Room', 'Dining Area', 'WiFi', 'Fireplace', 'Antique Furnishings'], images: ['/rooms/heritage-suite.png', '/rooms/heritage-suite-living.jpg', '/rooms/heritage-suite-bedroom.jpg'] },
-      { prefix: '4', type: 'villa', name: 'Family Villa', price: 6500, capacity: 6, amenities: ['Bunk Beds', 'Kitchenette', 'Play Area', 'Garden Access', 'Kids Club', 'Game Console', 'Crib Available'], images: ['/rooms/family-villa.png', '/rooms/family-villa-kids.png', '/rooms/family-villa-living.jpg', '/rooms/garden-terrace-bedroom.jpg'] },
-      { prefix: '5', type: 'penthouse', name: 'Skyline Penthouse', price: 9500, capacity: 4, amenities: ['King Bed', 'Private Pool', 'Butler Service', 'Kitchen', '360° View', 'Dining Area', 'Home Theater'], images: ['/rooms/penthouse.png', '/rooms/penthouse-living.jpg', '/rooms/penthouse-pool.jpg', '/rooms/penthouse-view.jpg'] },
+      { prefix: '1', type: 'ocean_view', name: 'Oceanic Executive Suite', price: 4200, capacity: 2, amenities: ['King Bed', 'Ocean View', 'WiFi', 'Mini Bar', 'Room Service', 'Private Balcony', 'Walk-in Shower'], images: IMG.oceanSuite },
+      { prefix: '2', type: 'garden', name: 'Coral Garden Terrace', price: 2800, capacity: 2, amenities: ['Queen Bed', 'Garden View', 'WiFi', 'Patio', 'Outdoor Seating', 'Rain Shower'], images: IMG.gardenSuite },
+      { prefix: '3', type: 'family', name: 'Heritage Suite', price: 6200, capacity: 4, amenities: ['King Bed', 'Living Room', 'Dining Area', 'WiFi', 'Fireplace', 'Antique Furnishings'], images: IMG.heritageSuite },
+      { prefix: '4', type: 'villa', name: 'Family Villa', price: 6500, capacity: 6, amenities: ['Bunk Beds', 'Kitchenette', 'Play Area', 'Garden Access', 'Kids Club', 'Game Console', 'Crib Available'], images: IMG.familyVilla },
+      { prefix: '5', type: 'penthouse', name: 'Skyline Penthouse', price: 9500, capacity: 4, amenities: ['King Bed', 'Private Pool', 'Butler Service', 'Kitchen', '360° View', 'Dining Area', 'Home Theater'], images: IMG.penthouse },
     ];
-    
+
     for (let floor = 1; floor <= 5; floor++) {
       const typeData = baseTypes[floor - 1];
       for (let r = 1; r <= 40; r++) {
@@ -112,11 +157,10 @@ export const seedDatabase = async () => {
     console.log(`✅ Added ${rooms.length} rooms`);
 
     // ==========================================
-    // 4. BOOKINGS (30 generated)
+    // 4. BOOKINGS (12 generated)
     // ==========================================
-    const today = new Date();
-    const futureDate = (days: number) => new Date(today.getTime() + days * 86400000).toISOString().split('T')[0];
-    const pastDate = (days: number) => new Date(today.getTime() - days * 86400000).toISOString().split('T')[0];
+    const futureDate = (days: number) => dayStr(days);
+    const pastDate = (days: number) => dayStr(-days);
 
     const bookings = [
       { id: 'BK-1001', guestId: 'robert_harrison', guestName: 'Robert Harrison', status: 'checked_in', roomNumber: '101', roomName: 'Oceanic Executive Suite 101', checkInDate: pastDate(2), checkOutDate: futureDate(2), totalAmount: 16800, numberOfGuests: 2, paymentStatus: 'deposit_paid', depositPaid: 2520, balanceDue: 14280 },
@@ -124,18 +168,20 @@ export const seedDatabase = async () => {
       { id: 'BK-1003', guestId: 'amara_okafor', guestName: 'Amara Okafor', status: 'checked_in', roomNumber: '302', roomName: 'Heritage Suite 302', checkInDate: pastDate(1), checkOutDate: futureDate(5), totalAmount: 37200, numberOfGuests: 4, paymentStatus: 'paid', depositPaid: 5580, balanceDue: 0, lastPaidAt: new Date().toISOString() },
       { id: 'BK-1004', guestId: 'jacobus_van_der_merwe', guestName: 'Jacobus van der Merwe', status: 'checked_in', roomNumber: '410', roomName: 'Family Villa 410', checkInDate: pastDate(4), checkOutDate: futureDate(3), totalAmount: 45500, numberOfGuests: 6, paymentStatus: 'deposit_paid', depositPaid: 6825, balanceDue: 38675 },
       { id: 'BK-1005', guestId: 'sanjay_gupta', guestName: 'Sanjay Gupta', status: 'checked_in', roomNumber: '501', roomName: 'Skyline Penthouse 501', checkInDate: pastDate(1), checkOutDate: futureDate(7), totalAmount: 76000, numberOfGuests: 4, paymentStatus: 'paid', depositPaid: 11400, balanceDue: 0, lastPaidAt: new Date().toISOString() },
-      
+      { id: 'BK-1015', guestId: 'emily_blunt', guestName: 'Emily Blunt', status: 'checked_in', roomNumber: '109', roomName: 'Oceanic Executive Suite 109', checkInDate: pastDate(1), checkOutDate: futureDate(4), totalAmount: 21000, numberOfGuests: 2, paymentStatus: 'paid', depositPaid: 3150, balanceDue: 0, lastPaidAt: new Date().toISOString() },
+
       { id: 'BK-1006', guestId: 'isabella_rossi', guestName: 'Isabella Rossi', status: 'checked_out', roomNumber: '105', roomName: 'Oceanic Executive Suite 105', checkInDate: pastDate(10), checkOutDate: pastDate(7), totalAmount: 12600, numberOfGuests: 2, paymentStatus: 'paid', depositPaid: 1890, balanceDue: 0, lastPaidAt: pastDate(7) },
       { id: 'BK-1012', guestId: 'linda_thompson', guestName: 'Linda Thompson', status: 'checked_out', roomNumber: '215', roomName: 'Coral Garden Terrace 215', checkInDate: pastDate(20), checkOutDate: pastDate(17), totalAmount: 8400, numberOfGuests: 2, paymentStatus: 'paid', depositPaid: 1260, balanceDue: 0, lastPaidAt: pastDate(17) },
-      
+
       { id: 'BK-1008', guestId: 'sarah_johnson', guestName: 'Sarah Johnson', status: 'confirmed', roomNumber: '305', roomName: 'Heritage Suite 305', checkInDate: futureDate(3), checkOutDate: futureDate(6), totalAmount: 18600, numberOfGuests: 2, paymentStatus: 'deposit_paid', depositPaid: 2790, balanceDue: 15810 },
       { id: 'BK-1009', guestId: 'maria_garcia', guestName: 'Maria Garcia', status: 'confirmed', roomNumber: '208', roomName: 'Coral Garden Terrace 208', checkInDate: futureDate(5), checkOutDate: futureDate(9), totalAmount: 11200, numberOfGuests: 2, paymentStatus: 'pending', depositPaid: 0, balanceDue: 11200 },
       { id: 'BK-1010', guestId: 'david_wilson', guestName: 'David Wilson', status: 'confirmed', roomNumber: '505', roomName: 'Skyline Penthouse 505', checkInDate: futureDate(7), checkOutDate: futureDate(11), totalAmount: 38000, numberOfGuests: 3, paymentStatus: 'pending', depositPaid: 0, balanceDue: 38000 },
+      { id: 'BK-1016', guestId: 'lucy_liu', guestName: 'Lucy Liu', status: 'confirmed', roomNumber: '218', roomName: 'Coral Garden Terrace 218', checkInDate: futureDate(2), checkOutDate: futureDate(5), totalAmount: 8400, numberOfGuests: 2, paymentStatus: 'deposit_paid', depositPaid: 1260, balanceDue: 7140 },
     ];
 
     for (const b of bookings) {
       await setDoc(doc(db, 'bookings', b.id), b);
-      
+
       if (b.status === 'checked_in') {
         const roomRef = doc(db, 'rooms', b.roomNumber);
         await setDoc(roomRef, { isAvailable: false }, { merge: true });
@@ -174,24 +220,25 @@ export const seedDatabase = async () => {
     console.log(`✅ Added ${serviceRequests.length} service requests`);
 
     // ==========================================
-    // 6. RESTAURANT MENU (RTDB)
+    // 6. RESTAURANT MENU (RTDB, online images)
     // ==========================================
     const menuRef = ref(rtdb, 'menu');
     await set(menuRef, {
       appetizers: [
-        { id: 'a1', name: 'Tuna Tartare', price: 145, description: 'Fresh Atlantic tuna with avocado, sesame, and citrus soy dressing.', dietary: ['gluten-free'], image: '/food/tuna-tartare.jpg' },
-        { id: 'a2', name: 'Oysters Rockefeller', price: 180, description: 'Half dozen fresh oysters baked with spinach, herbs, and breadcrumbs.', dietary: ['contains shellfish'], image: '/food/oysters-rockefeller.jpg' },
+        { id: 'a1', name: 'Tuna Tartare', price: 145, description: 'Fresh Atlantic tuna with avocado, sesame, and citrus soy dressing.', dietary: ['gluten-free'], image: IMG.foodTartare },
+        { id: 'a2', name: 'Oysters Rockefeller', price: 180, description: 'Half dozen fresh oysters baked with spinach, herbs, and breadcrumbs.', dietary: ['contains shellfish'], image: IMG.foodOysters },
       ],
       mains: [
-        { id: 'm1', name: 'Wagyu Beef Steak', price: 450, description: '250g A5 Wagyu with truffle mash, asparagus, and red wine reduction.', dietary: ['gluten-free option'], image: '/food/wagyu-steak.jpg' },
-        { id: 'm2', name: 'Grilled Lobster', price: 580, description: 'Whole lobster split and grilled with garlic herb butter.', dietary: ['contains shellfish'], image: '/food/grilled-lobster.jpg' },
-        { id: 'm3', name: 'Wild Mushroom Risotto', price: 210, description: 'Creamy Arborio rice with porcini, shiitake, and truffle oil.', dietary: ['vegetarian'], image: '/food/mushroom-risotto.jpg' },
+        { id: 'm1', name: 'Wagyu Beef Steak', price: 450, description: '250g A5 Wagyu with truffle mash, asparagus, and red wine reduction.', dietary: ['gluten-free option'], image: IMG.foodSteak },
+        { id: 'm2', name: 'Grilled Lobster', price: 580, description: 'Whole lobster split and grilled with garlic herb butter.', dietary: ['contains shellfish'], image: IMG.foodLobster },
+        { id: 'm3', name: 'Wild Mushroom Risotto', price: 210, description: 'Creamy Arborio rice with porcini, shiitake, and truffle oil.', dietary: ['vegetarian'], image: IMG.foodRisotto },
       ],
       desserts: [
-        { id: 'de1', name: 'Chocolate Fondant', price: 95, description: 'Warm chocolate lava cake with vanilla bean ice cream.', dietary: ['vegetarian'], image: '/food/chocolate-lava-cake.jpg' },
+        { id: 'de1', name: 'Chocolate Fondant', price: 95, description: 'Warm chocolate lava cake with vanilla bean ice cream.', dietary: ['vegetarian'], image: IMG.foodCake },
       ],
       beverages: [
-        { id: 'b1', name: 'Signature Cocktail', price: 120, description: 'Azure Horizon Special - gin, elderflower, prosecco, and edible flowers.', image: '/food/signature-cocktail.jpg' },
+        { id: 'b1', name: 'Signature Cocktail', price: 120, description: 'Azure Horizon Special - gin, elderflower, prosecco, and edible flowers.', image: IMG.foodCocktail },
+        { id: 'b2', name: 'Vineyard Reserve Merlot', price: 340, description: 'Single-estate merlot from the Cape Winelands, served by the bottle.', dietary: ['contains alcohol'], image: IMG.foodWine },
       ],
     });
     console.log(`✅ Added restaurant menu`);
@@ -206,6 +253,7 @@ export const seedDatabase = async () => {
     // ==========================================
     const tableReservations = [
       { guestId: 'robert_harrison', guestName: 'Robert Harrison', date: futureDate(1), time: '19:00', partySize: 2, tableNumber: 5, tableType: 'medium', location: 'Window', status: 'confirmed', specialRequests: 'Anniversary celebration', createdAt: new Date().toISOString() },
+      { guestId: 'amara_okafor', guestName: 'Amara Okafor', date: futureDate(2), time: '18:30', partySize: 4, tableNumber: 12, tableType: 'large', location: 'Terrace', status: 'confirmed', specialRequests: 'High chair for toddler', createdAt: new Date().toISOString() },
     ];
     for (const r of tableReservations) {
       await addDoc(collection(db, 'table_reservations'), r);
@@ -226,7 +274,7 @@ export const seedDatabase = async () => {
     for (const sb of spaBookings) {
       await setDoc(doc(db, 'spa_bookings', sb.id), sb);
     }
-    
+
     const tourBookings = [
       {
         id: 'TB-001',
@@ -249,13 +297,269 @@ export const seedDatabase = async () => {
       { guestId: 'guest_005', guestName: 'Priya Naidoo', category: 'restaurant', rating: 5, comments: 'Chef Sibusiso\'s seafood platter is out of this world! The fresh line fish with chakalaka butter sauce was a masterpiece.', createdAt: pastDate(1), helpful: 22 },
       { guestId: 'guest_010', guestName: 'Zanele Mthembu', category: 'tour', rating: 5, comments: 'The whale watching tour was a once-in-a-lifetime experience! Our guide was incredibly knowledgeable and we spotted a mother and calf.', createdAt: pastDate(1), helpful: 25 },
       { guestId: 'guest_014', guestName: 'Lerato Maseko', category: 'spa', rating: 5, comments: 'The hot stone massage was pure bliss. Therapist Nomsa has magic hands! The relaxation room with herbal tea afterwards was the perfect way to unwind.', createdAt: pastDate(2), helpful: 20 },
+      { guestId: 'robert_harrison', guestName: 'Robert Harrison', category: 'event', rating: 5, comments: 'Our corporate gala at the Grand Ocean Ballroom was flawless. The AV setup, catering and coordination were world class.', createdAt: pastDate(3), helpful: 31 },
     ];
     for (const review of dummyReviews) {
       await addDoc(collection(db, 'reviews'), review);
     }
     console.log(`✅ Added ${dummyReviews.length} guest reviews`);
 
-    alert("✅ System Initialized Successfully with 200 rooms and fresh demo data!");
+    // ==========================================
+    // 11. FRESH EVENT BOOKINGS (online venue images)
+    // Matches EventBooking.tsx shape + statuses the
+    // mobile staff app's check-in / inspection filters accept.
+    // ==========================================
+    const venues = [
+      { id: 'v-grand-ballroom', name: 'The Grand Ocean Ballroom', maxCapacity: 400, pricePerDay: 25000, image: IMG.ballroom },
+      { id: 'v-ashanti-estate', name: 'Ashanti Estate', maxCapacity: 300, pricePerDay: 32000, image: IMG.estate },
+      { id: 'v-klein-vineyards', name: 'Klein Parys Vineyards', maxCapacity: 120, pricePerDay: 18000, image: IMG.vineyard },
+      { id: 'v-beach-pavilion', name: 'Sunset Beach Pavilion', maxCapacity: 150, pricePerDay: 15000, image: IMG.beachPavilion },
+      { id: 'v-garden-terrace', name: 'Botanical Garden Terrace', maxCapacity: 80, pricePerDay: 9000, image: IMG.gardenTerrace },
+    ];
+
+    const eventBookings = [
+      {
+        id: 'EV-1001',
+        guestId: 'robert_harrison', guestName: 'Robert Harrison',
+        venueId: 'v-grand-ballroom', venueName: 'The Grand Ocean Ballroom', venueMaxCapacity: 400,
+        eventDate: isoFor(todayStr, '18:00'), date: todayStr, eventDateStr: todayStr,
+        bookedDates: [todayStr], expectedAttendance: 85,
+        eventType: 'Gala Dinner', bookingType: 'hourly', startTime: '18:00', duration: 5,
+        totalAmount: 125000, depositRequired: 62500, termsAccepted: true,
+        status: 'paid', imageUrl: IMG.ballroom,
+        createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1002',
+        guestId: 'amara_okafor', guestName: 'Amara Okafor',
+        venueId: 'v-beach-pavilion', venueName: 'Sunset Beach Pavilion', venueMaxCapacity: 150,
+        eventDate: isoFor(todayStr, '14:00'), date: todayStr, eventDateStr: todayStr,
+        bookedDates: [todayStr], expectedAttendance: 60,
+        eventType: 'Beach Party', bookingType: 'hourly', startTime: '14:00', duration: 6,
+        totalAmount: 90000, depositRequired: 45000, termsAccepted: true,
+        status: 'confirmed', imageUrl: IMG.beachPavilion,
+        createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1003',
+        guestId: 'sarah_johnson', guestName: 'Sarah Johnson',
+        venueId: 'v-ashanti-estate', venueName: 'Ashanti Estate', venueMaxCapacity: 300,
+        eventDate: isoFor(dayStr(2), '11:00'), date: dayStr(2), eventDateStr: dayStr(2),
+        bookedDates: [dayStr(2)], expectedAttendance: 150,
+        eventType: 'Wedding', bookingType: 'daily',
+        totalAmount: 128000, depositRequired: 64000, termsAccepted: true,
+        status: 'deposit_paid', imageUrl: IMG.estate,
+        createdAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1004',
+        guestId: 'zoe_katsaros', guestName: 'Zoe Katsaros',
+        venueId: 'v-klein-vineyards', venueName: 'Klein Parys Vineyards', venueMaxCapacity: 120,
+        eventDate: isoFor(dayStr(5), '16:00'), date: dayStr(5), eventDateStr: dayStr(5),
+        bookedDates: [dayStr(5)], expectedAttendance: 70,
+        eventType: 'Wine & Cheese Evening', bookingType: 'hourly', startTime: '16:00', duration: 4,
+        totalAmount: 72000, depositRequired: 36000, termsAccepted: true,
+        status: 'confirmed', imageUrl: IMG.vineyard,
+        createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1005',
+        guestId: 'jacobus_van_der_merwe', guestName: 'Jacobus van der Merwe',
+        venueId: 'v-garden-terrace', venueName: 'Botanical Garden Terrace', venueMaxCapacity: 80,
+        eventDate: isoFor(dayStr(9), '13:00'), date: dayStr(9), eventDateStr: dayStr(9),
+        bookedDates: [dayStr(9)], expectedAttendance: 45,
+        eventType: 'Garden Party', bookingType: 'hourly', startTime: '13:00', duration: 5,
+        totalAmount: 45000, depositRequired: 22500, termsAccepted: true,
+        status: 'pending_payment', imageUrl: IMG.gardenTerrace,
+        createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+      },
+      {
+        id: 'EV-1006',
+        guestId: 'sanjay_gupta', guestName: 'Sanjay Gupta',
+        venueId: 'v-grand-ballroom', venueName: 'The Grand Ocean Ballroom', venueMaxCapacity: 400,
+        eventDate: isoFor(dayStr(-2), '19:00'), date: dayStr(-2), eventDateStr: dayStr(-2),
+        bookedDates: [dayStr(-2)], expectedAttendance: 200,
+        eventType: 'Corporate Conference', bookingType: 'daily',
+        totalAmount: 175000, depositRequired: 87500, termsAccepted: true,
+        status: 'paid', imageUrl: IMG.ballroom,
+        createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
+      },
+    ];
+
+    for (const ev of eventBookings) {
+      await setDoc(doc(db, 'event_bookings', ev.id), ev);
+    }
+    console.log(`✅ Added ${eventBookings.length} event bookings`);
+
+    // ==========================================
+    // 12. EVENT INVITATIONS + QR CODES
+    // QR payloads are signed exactly like the mobile
+    // app does, so seeded QRs scan successfully.
+    // ==========================================
+    interface InviteSeed { id: string; eventId: string; inviteeEmail: string; inviteeName: string; status: string; checkedInAt?: string }
+
+    const inviteSeeds: InviteSeed[] = [
+      // EV-1001 (today — Gala Dinner)
+      { id: 'INV-1001', eventId: 'EV-1001', inviteeEmail: 'n.ngema@example.com', inviteeName: 'Naledi Ngema', status: 'accepted' },
+      { id: 'INV-1002', eventId: 'EV-1001', inviteeEmail: 'p.pillay@example.com', inviteeName: 'Priya Pillay', status: 'accepted' },
+      { id: 'INV-1003', eventId: 'EV-1001', inviteeEmail: 't.brown@example.com', inviteeName: 'Trevor Brown', status: 'accepted' },
+      { id: 'INV-1004', eventId: 'EV-1001', inviteeEmail: 'k.mokoena@example.com', inviteeName: 'Kabelo Mokoena', status: 'checked_in', checkedInAt: isoFor(todayStr, '17:05') },
+      { id: 'INV-1005', eventId: 'EV-1001', inviteeEmail: 's.leclerc@example.com', inviteeName: 'Sibongile Leclerc', status: 'declined' },
+      // EV-1002 (today — Beach Party)
+      { id: 'INV-1006', eventId: 'EV-1002', inviteeEmail: 'j.vos@example.com', inviteeName: 'Janine Vos', status: 'accepted' },
+      { id: 'INV-1007', eventId: 'EV-1002', inviteeEmail: 'a.dube@example.com', inviteeName: 'Ayanda Dube', status: 'accepted' },
+      { id: 'INV-1008', eventId: 'EV-1002', inviteeEmail: 'm.kruger@example.com', inviteeName: 'Marike Kruger', status: 'checked_in', checkedInAt: isoFor(todayStr, '13:30') },
+      // EV-1003 (upcoming — Wedding)
+      { id: 'INV-1009', eventId: 'EV-1003', inviteeEmail: 'b.mthembu@example.com', inviteeName: 'Bongani Mthembu', status: 'accepted' },
+      { id: 'INV-1010', eventId: 'EV-1003', inviteeEmail: 'l.petersen@example.com', inviteeName: 'Lerato Petersen', status: 'accepted' },
+      { id: 'INV-1011', eventId: 'EV-1003', inviteeEmail: 's.anand@example.com', inviteeName: 'Suresh Anand', status: 'accepted' },
+      // EV-1004 (upcoming — Wine evening)
+      { id: 'INV-1012', eventId: 'EV-1004', inviteeEmail: 'h.venter@example.com', inviteeName: 'Helena Venter', status: 'accepted' },
+      { id: 'INV-1013', eventId: 'EV-1004', inviteeEmail: 'd.okafor@example.com', inviteeName: 'Dike Okafor', status: 'accepted' },
+    ];
+
+    for (const inv of inviteSeeds) {
+      const issuedAt = Date.now() - 4 * 86400000;
+      const hostId = eventBookings.find(e => e.id === inv.eventId)?.guestId || 'robert_harrison';
+      const payload = {
+        invitationId: inv.id,
+        eventId: inv.eventId,
+        inviteeEmail: inv.inviteeEmail,
+        inviteeName: inv.inviteeName,
+        hostId,
+        status: inv.status,
+        issuedAt,
+      };
+      const sig = await sha256Hex(QR_SIGNING_SECRET + JSON.stringify(payload));
+      const qrCode = JSON.stringify({ ...payload, sig });
+      const inviteDoc: Record<string, unknown> = {
+        eventId: inv.eventId,
+        inviteeEmail: inv.inviteeEmail,
+        inviteeName: inv.inviteeName,
+        hostId,
+        status: inv.status,
+        issuedAt,
+        qrCode,
+        createdAt: new Date(issuedAt).toISOString(),
+      };
+      if (inv.checkedInAt) {
+        inviteDoc.checkedInAt = inv.checkedInAt;
+        inviteDoc.checkedInBy = 'sipho_dlamini';
+        inviteDoc.method = 'qr_scan';
+      }
+      await setDoc(doc(db, 'event_invitations', inv.id), inviteDoc);
+
+      if (inv.status === 'checked_in') {
+        await addDoc(collection(db, 'attendee_checkins'), {
+          eventId: inv.eventId,
+          invitationId: inv.id,
+          attendeeId: inv.id,
+          inviteeEmail: inv.inviteeEmail,
+          inviteeName: inv.inviteeName,
+          checkedInAt: inv.checkedInAt,
+          checkedInBy: 'sipho_dlamini',
+          method: 'qr_scan',
+        });
+      }
+    }
+    console.log(`✅ Added ${inviteSeeds.length} event invitations with signed QR codes`);
+
+    // ==========================================
+    // 13. DEMO DAMAGE RECORDS (online photo evidence)
+    // Uses item.photo + top-level photos so the mobile
+    // Damage Resolution screen renders proof images.
+    // ==========================================
+    const demoDamage = [
+      {
+        id: 'DMG-1001',
+        eventId: 'EV-1006',
+        bookingRef: 'EV-1006',
+        guestId: 'sanjay_gupta',
+        guestEmail: 'guest5@example.com',
+        venueId: 'v-grand-ballroom',
+        venueName: 'The Grand Ocean Ballroom',
+        eventDate: isoFor(dayStr(-2), '19:00'),
+        expectedAttendance: 200,
+        inspectorId: 'sipho_dlamini',
+        inspectorName: 'Sipho Dlamini',
+        inspectorEmail: 's.dlamini@azurehorizon.com',
+        assignedTechnicianId: 'kevin_dupreez',
+        updatedByEmail: 's.dlamini@azurehorizon.com',
+        items: [
+          {
+            item: 'Crystal Chandeliers',
+            assetName: 'Crystal Chandeliers',
+            category: 'Decor & Fixtures',
+            condition: 'damaged',
+            description: 'One crystal pendant knocked loose and a glass finial cracked during the gala.',
+            estimatedCost: 1450,
+            photo: u('photo-1519710164239-da123dc03ef4'),
+            photoName: 'chandelier-damage.jpg',
+          },
+          {
+            item: 'AV Projector & Screen',
+            assetName: 'AV Projector & Screen',
+            category: 'AV & Electrical',
+            condition: 'damaged',
+            description: 'Projector lens scratched; screen has a 10cm tear on the lower left corner.',
+            estimatedCost: 3200,
+            photo: u('photo-1504384308090-c894fdcc538d'),
+            photoName: 'projector-screen-tear.jpg',
+          },
+        ],
+        generalNotes: 'Light damage only. Guest has agreed to cover repair costs.',
+        totalCost: 4650,
+        status: 'in_repair',
+        inspectionId: 'INSP-2026-08-12-001',
+        damageFlagged: true,
+        createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+        updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        photos: [u('photo-1519710164239-da123dc03ef4'), u('photo-1504384308090-c894fdcc538d')],
+      },
+      {
+        id: 'DMG-1002',
+        eventId: 'EV-1002',
+        bookingRef: 'EV-1002',
+        guestId: 'amara_okafor',
+        guestEmail: 'guest3@example.com',
+        venueId: 'v-beach-pavilion',
+        venueName: 'Sunset Beach Pavilion',
+        eventDate: isoFor(todayStr, '14:00'),
+        expectedAttendance: 60,
+        inspectorId: 'lerato_molefe',
+        inspectorName: 'Lerato Molefe',
+        inspectorEmail: 'l.molefe@azurehorizon.com',
+        assignedTechnicianId: '',
+        updatedByEmail: 'l.molefe@azurehorizon.com',
+        items: [
+          {
+            item: 'Wooden Decking',
+            assetName: 'Wooden Decking',
+            category: 'Grounds & Outdoor',
+            condition: 'damaged',
+            description: 'Two deck planks charred by a tipped tiki torch near the bar area.',
+            estimatedCost: 950,
+            photo: u('photo-1486915309851-b0cc1f8a0084'),
+            photoName: 'decking-burn.jpg',
+          },
+        ],
+        generalNotes: 'Pending guest response.',
+        totalCost: 950,
+        status: 'recorded',
+        inspectionId: 'INSP-2026-08-14-002',
+        damageFlagged: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        photos: [u('photo-1486915309851-b0cc1f8a0084')],
+      },
+    ];
+
+    for (const dmg of demoDamage) {
+      await setDoc(doc(db, 'damage_records', dmg.id), dmg);
+    }
+    console.log(`✅ Added ${demoDamage.length} demo damage records with photo evidence`);
+
+    alert("✅ System Initialized Successfully with 200 rooms, 6 fresh events, signed QR invitations and online images!");
   } catch (err) {
     console.error(err);
     alert("Seeding failed. Check console for details.");

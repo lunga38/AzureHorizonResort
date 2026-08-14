@@ -1064,66 +1064,77 @@ export const fetchBlockedSlotsWithBuffer = async (venueId: string, dateString: s
 const DEFAULT_REWARDS: RewardItem[] = [
   {
     id: 'reward-1',
-    title: 'Complimentary Dessert',
+    title: 'Complimentary Dessert & Coffee',
     pts: 100,
-    description: 'Enjoy a artisan gourmet dessert at our fine dining restaurant.',
+    description: 'Enjoy a gourmet dessert paired with your choice of coffee at our fine dining restaurant.',
     category: 'Food & Beverage',
     minTier: 'Bronze',
     tierRank: 1,
     validityDays: 30,
-    terms: 'Valid for single use. Non-refundable.',
-    howToRedeem: 'Automatically applied - no staff verification needed. Your dessert is added to your dining bill at no cost.',
+    terms: 'Valid on main course orders over R150. Single use. Non-refundable.',
+    howToRedeem: 'Show your QR voucher to the waiter at any Azure Horizon dining outlet.',
     isActive: true,
   },
   {
     id: 'reward-2',
-    title: 'Late Checkout (2 PM)',
-    pts: 250,
-    description: 'Extend your stay with a complimentary late check-out up to 2:00 PM.',
-    category: 'Room Perks',
-    minTier: 'Silver',
+    title: 'Complimentary Welcome Drink',
+    pts: 150,
+    description: 'Raise a toast with a complimentary signature welcome drink at the Sunset Lounge.',
+    category: 'Food & Beverage',
+    minTier: 'Bronze',
     tierRank: 2,
     validityDays: 30,
-    terms: 'Subject to room availability upon request.',
-    howToRedeem: 'Automatically applied - your reservation checkout time is extended to 2:00 PM at no cost. No staff approval needed.',
+    terms: 'Single use. Non-alcoholic option available on request.',
+    howToRedeem: 'Show your QR voucher at the Sunset Lounge bar to receive your welcome drink.',
     isActive: true,
   },
   {
     id: 'reward-3',
-    title: 'Free Spa Treatment (30 Min)',
-    pts: 500,
-    description: 'Relax with a 30-minute foot or head massage at Azure Spa.',
-    category: 'Spa & Wellness',
-    minTier: 'Gold',
+    title: '2-for-1 Cocktails at Sunset Lounge',
+    pts: 200,
+    description: 'Enjoy two handcrafted cocktails for the price of one as the sun goes down.',
+    category: 'Bar & Lounge',
+    minTier: 'Bronze',
     tierRank: 3,
-    validityDays: 60,
-    terms: 'Advanced reservation required.',
-    howToRedeem: 'Automatically applied - your 30-minute treatment is pre-paid and confirmed when you book at the spa.',
+    validityDays: 30,
+    terms: 'Valid on house cocktails. Single use per table.',
+    howToRedeem: 'Show your QR voucher at the Sunset Lounge bar to get two cocktails for the price of one.',
     isActive: true,
   },
   {
     id: 'reward-4',
-    title: 'Executive Suite Upgrade',
-    pts: 1500,
-    description: 'Upgrade your room reservation to our luxury ocean-view Executive Suite.',
-    category: 'Room Perks',
-    minTier: 'Platinum',
+    title: 'Dessert Platter for Two',
+    pts: 250,
+    description: 'A sharing platter of signature desserts crafted for two at our dining outlets.',
+    category: 'Food & Beverage',
+    minTier: 'Bronze',
     tierRank: 4,
-    validityDays: 90,
-    terms: 'Valid for up to 2 nights consecutive stay.',
-    howToRedeem: 'Automatically applied - your reservation is upgraded to an Executive Suite at no cost. No staff approval needed.',
+    validityDays: 30,
+    terms: 'Served at main dining outlets. Single use. Non-refundable.',
+    howToRedeem: 'Show your QR voucher to the waiter to receive a sharing dessert platter for two.',
+    isActive: true,
+  },
+  {
+    id: 'reward-5',
+    title: '10% Dining Discount Voucher',
+    pts: 300,
+    description: 'Save 10% on your dining bill at any Azure Horizon food and beverage outlet.',
+    category: 'Food & Beverage',
+    minTier: 'Bronze',
+    tierRank: 5,
+    validityDays: 30,
+    terms: 'Valid on food and non-alcoholic beverages. Cannot be combined with other offers.',
+    howToRedeem: 'Show your QR voucher to the waiter before paying and 10% will be deducted from your dining bill.',
     isActive: true,
   }
 ];
 
 export async function seedInitialRewards(): Promise<void> {
   try {
-    const rewardsRef = collection(db, 'loyalty_rewards');
-    const snapshot = await getDocs(rewardsRef);
-    if (snapshot.empty) {
-      for (const item of DEFAULT_REWARDS) {
-        await setDoc(doc(db, 'loyalty_rewards', item.id), item);
-      }
+    // Overwrite on every boot so the live catalog always matches this release
+    // (all five rewards are waiter-scannable dining/bar vouchers only).
+    for (const item of DEFAULT_REWARDS) {
+      await setDoc(doc(db, 'loyalty_rewards', item.id), item);
     }
   } catch (error) {
     console.error('Error seeding initial rewards:', error);
@@ -1683,7 +1694,7 @@ export async function redeemVoucherByStaff(voucherCode: string, staffUid: string
   return { success: true, message: `Voucher ${data.rewardTitle} redeemed`, voucher: { ...data, status: 'redeemed' } };
 }
 // ============================================================
-// EVENT PAYMENT & CATERING — MOBILE-PARITY HELPERS
+// EVENT PAYMENT & CATERING ï¿½ MOBILE-PARITY HELPERS
 // Mirrors the mobile app's deriveBookingPaymentState / applyEventPayment /
 // saveEventCatering / updateEventBookingCateringTotals exactly, so web and
 // mobile read the same money state and write the same documents.

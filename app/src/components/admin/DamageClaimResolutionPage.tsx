@@ -231,8 +231,8 @@ export const DamageClaimResolutionPage: React.FC = () => {
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                     {selectedClaim.items.map((item: any, i: number) => (
                       <div key={i} className="bg-slate-800/60 border border-slate-700/50 rounded-lg p-2.5 flex items-start gap-3">
-                        {item.photo ? (
-                          <img src={item.photo} alt={item.assetName || 'Damage proof'} className="h-14 w-20 object-cover rounded-lg border border-slate-600 shrink-0" />
+                        {item.photo || item.photoUrl ? (
+                          <img src={item.photo || item.photoUrl} alt={item.assetName || 'Damage proof'} className="h-14 w-20 object-cover rounded-lg border border-slate-600 shrink-0" />
                         ) : (
                           <div className="h-14 w-20 bg-slate-900 rounded-lg border border-dashed border-slate-700 flex items-center justify-center text-slate-600 shrink-0">
                             No photo

@@ -32,10 +32,11 @@ const TIERS = [
 ];
 
 const MILESTONE_REWARDS = [
-  { title: 'Complimentary Dessert', pts: 100 },
-  { title: 'Room Upgrade Request', pts: 300 },
-  { title: 'Free Spa Treatment', pts: 500 },
-  { title: 'Executive Suite Upgrade', pts: 1000 },
+  { title: 'Complimentary Dessert & Coffee', pts: 100 },
+  { title: 'Complimentary Welcome Drink', pts: 150 },
+  { title: '2-for-1 Cocktails at Sunset Lounge', pts: 200 },
+  { title: 'Dessert Platter for Two', pts: 250 },
+  { title: '10% Dining Discount Voucher', pts: 300 },
 ];
 
 export function LoyaltyCard({ onBack }: LoyaltyCardProps) {
@@ -231,9 +232,9 @@ export function LoyaltyCard({ onBack }: LoyaltyCardProps) {
                 <p className="font-bold text-sm text-gray-900">{tier.name}</p>
                 <p className="text-[11px] text-gray-500 mt-1">
                   {i === 0 && '1x Points Earn Rate'}
-                  {i === 1 && 'Late Checkout Privileges'}
-                  {i === 2 && 'Free Spa Treatment'}
-                  {i === 3 && 'Complimentary Suite Upgrade'}
+                  {i === 1 && 'Priority Dining Seating'}
+                  {i === 2 && 'Priority Sunset Lounge Seating'}
+                  {i === 3 && 'Complimentary Welcome Drink'}
                 </p>
               </div>
             ))}
