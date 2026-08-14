@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DamageInspectionPage } from '@/components/maintenance/DamageInspectionPage';
 
 import { 
   Wrench, 
@@ -44,6 +45,7 @@ export function MaintenancePortal() {
   const [assignedTech, setAssignedTech] = useState('');
   const [newRequestNotification, setNewRequestNotification] = useState<RoomServiceRequest | null>(null);
   const [showNotification, setShowNotification] = useState(false);
+  const [activeTab, setActiveTab] = useState<'work-orders' | 'damage-claims'>('work-orders');
   
   const [alertModal, setAlertModal] = useState({
     open: false,
@@ -322,7 +324,34 @@ export function MaintenancePortal() {
           </div>
         </div>
 
+        {/* TAB BAR */}
+        <div className="flex gap-2 mb-6 bg-white dark:bg-slate-900 p-1.5 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm w-fit">
+          <button
+            onClick={() => setActiveTab('work-orders')}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'work-orders'
+                ? 'bg-[#1e3a5f] text-white shadow'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Wrench className="h-4 w-4" /> Work Orders
+          </button>
+          <button
+            onClick={() => setActiveTab('damage-claims')}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'damage-claims'
+                ? 'bg-rose-600 text-white shadow'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4" /> Damage Claims
+          </button>
+        </div>
+
         {/* CONDITIONAL VIEW RENDERING */}
+        {activeTab === 'damage-claims' ? (
+          <DamageInspectionPage />
+        ) : (
         <>
             <div className="grid gap-4">
               {requests.length === 0 ? (
@@ -419,6 +448,7 @@ export function MaintenancePortal() {
               </div>
             </div>
         </>
+        )}
       </div>
     </div>
   );

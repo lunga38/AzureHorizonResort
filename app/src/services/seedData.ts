@@ -1,5 +1,5 @@
 import { db, rtdb } from '../lib/firebase';
-import { doc, setDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, getDocs, deleteDoc, query, where } from 'firebase/firestore';
 import { ref, set } from 'firebase/database';
 import { seedTables } from './tableSeedData';
 
@@ -48,9 +48,44 @@ const sha256Hex = async (text: string): Promise<string> => {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
-export const seedDatabase = async () => {
+export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
+  const notify = (msg: string) => {
+    if (!opts.silent) alert(msg);
+    console.log(msg);
+  };
   try {
-    alert("Starting database initialization...");
+    notify("Starting database initialization...");
+
+    // ==========================================
+    // 0. CLEAN SLATE — remove ALL previously seeded
+    // (now stale) event-related data so the fresh
+    // seed below always reflects TODAY's dates.
+    // ==========================================
+    const wipeCollection = async (name: string) => {
+      try {
+        const snap = await getDocs(collection(db, name));
+        for (const d of snap.docs) await deleteDoc(d.ref);
+      } catch (err) {
+        console.warn(`Wipe ${name} skipped:`, err);
+      }
+    };
+    await Promise.all([
+      wipeCollection('event_bookings'),
+      wipeCollection('event_invitations'),
+      wipeCollection('attendee_checkins'),
+      wipeCollection('event_inspections'),
+      wipeCollection('damage_records'),
+      wipeCollection('refund_requests'),
+      wipeCollection('live_complaints'),
+      wipeCollection('event_feedback'),
+    ]);
+    try {
+      const eventReviews = await getDocs(query(collection(db, 'reviews'), where('category', '==', 'event')));
+      for (const r of eventReviews.docs) await deleteDoc(r.ref);
+    } catch (err) {
+      console.warn('Wipe event reviews skipped:', err);
+    }
+    console.log("🧹 Wiped stale event data for a fresh seed");
 
     // ==========================================
     // 1. STAFF ACCOUNTS (27)
@@ -413,8 +448,8 @@ export const seedDatabase = async () => {
         id: 'EV-1009',
         guestId: 'marta_costa', guestName: 'Marta Costa',
         venueId: 'v-ashanti-estate', venueName: 'Ashanti Estate', venueMaxCapacity: 300,
-        eventDate: isoFor(dayStr(-3), '12:00'), date: dayStr(-3), eventDateStr: dayStr(-3),
-        bookedDates: [dayStr(-3)], expectedAttendance: 120,
+        eventDate: isoFor(dayStr(-2), '12:00'), date: dayStr(-2), eventDateStr: dayStr(-2),
+        bookedDates: [dayStr(-2)], expectedAttendance: 120,
         eventType: 'Birthday Celebration', bookingType: 'daily',
         totalAmount: 96000, depositRequired: 48000, termsAccepted: true,
         status: 'paid', imageUrl: IMG.estate,
@@ -453,6 +488,18 @@ export const seedDatabase = async () => {
       // EV-1004 (upcoming — Wine evening)
       { id: 'INV-1012', eventId: 'EV-1004', inviteeEmail: 'h.venter@example.com', inviteeName: 'Helena Venter', status: 'accepted' },
       { id: 'INV-1013', eventId: 'EV-1004', inviteeEmail: 'd.okafor@example.com', inviteeName: 'Dike Okafor', status: 'accepted' },
+      // EV-1001 (today — more checked-in attendees for UC27 demo)
+      { id: 'INV-1014', eventId: 'EV-1001', inviteeEmail: 's.hlambisa@example.com', inviteeName: 'Sifundo Hlambisa', status: 'checked_in', checkedInAt: isoFor(todayStr, '17:10') },
+      { id: 'INV-1015', eventId: 'EV-1001', inviteeEmail: 'b.maqeda@example.com', inviteeName: 'Bandile Maqeda', status: 'checked_in', checkedInAt: isoFor(todayStr, '17:12') },
+      { id: 'INV-1016', eventId: 'EV-1001', inviteeEmail: 'l.gwala@example.com', inviteeName: 'Lunga Bradley Gwala', status: 'checked_in', checkedInAt: isoFor(todayStr, '17:15') },
+      { id: 'INV-1017', eventId: 'EV-1001', inviteeEmail: 'm.dlamini@example.com', inviteeName: 'Mpho Dlamini', status: 'accepted' },
+      { id: 'INV-1018', eventId: 'EV-1001', inviteeEmail: 'f.mdlalose@example.com', inviteeName: 'Fanelesibonge Mdlalose', status: 'accepted' },
+      { id: 'INV-1019', eventId: 'EV-1001', inviteeEmail: 's.mwandla@example.com', inviteeName: 'Sinakhokonke Mwandla', status: 'accepted' },
+      // EV-1002 (today — more sent invitations)
+      { id: 'INV-1020', eventId: 'EV-1002', inviteeEmail: 'm.mabanga@example.com', inviteeName: 'Melusi Mabanga', status: 'checked_in', checkedInAt: isoFor(todayStr, '13:45') },
+      { id: 'INV-1021', eventId: 'EV-1002', inviteeEmail: 'i.olatunji@example.com', inviteeName: 'Isaac Toluwanimi Olatunji', status: 'accepted' },
+      { id: 'INV-1022', eventId: 'EV-1002', inviteeEmail: 's.bande@example.com', inviteeName: 'Simphiwe Owethu Bande', status: 'accepted' },
+      { id: 'INV-1023', eventId: 'EV-1002', inviteeEmail: 'a.nzama@example.com', inviteeName: 'Asanda S. Nzama', status: 'accepted' },
     ];
 
     for (const inv of inviteSeeds) {
@@ -698,8 +745,8 @@ export const seedDatabase = async () => {
           { item: 'Damage flagged & documented', status: 'failed' },
         ],
         overallStatus: 'needs_attention',
-        completedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-        createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+        completedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
       },
     ];
     for (const insp of demoInspections) {
@@ -718,7 +765,7 @@ export const seedDatabase = async () => {
       guestEmail: 'guest7@example.com',
       venueId: 'v-ashanti-estate',
       venueName: 'Ashanti Estate',
-      eventDate: isoFor(dayStr(-3), '12:00'),
+      eventDate: isoFor(dayStr(-2), '12:00'),
       expectedAttendance: 120,
       inspectorId: 'sipho_dlamini',
       inspectorName: 'Sipho Dlamini',
@@ -867,9 +914,31 @@ export const seedDatabase = async () => {
       createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
     });
 
-    alert("✅ System Initialized Successfully with 200 rooms, 9 fresh events, signed QR invitations and online images!");
+    await setDoc(doc(db, 'meta', 'seedMarker'), {
+      lastSeedDate: todayStr,
+      lastSeedAt: new Date().toISOString(),
+    });
+
+    notify("✅ System Initialized Successfully with 200 rooms, 9 fresh events, signed QR invitations and online images!");
   } catch (err) {
     console.error(err);
-    alert("Seeding failed. Check console for details.");
+    notify("Seeding failed. Check console for details.");
+  }
+};
+
+// Auto-run on web landing page: only re-seeds when the
+// seed marker is stale (i.e. a different day), keeping the
+// demo data permanently in sync with "today". Silent by default.
+export const autoSeedIfNeeded = async (opts: { silent?: boolean } = {}) => {
+  try {
+    const marker = await getDoc(doc(db, 'meta', 'seedMarker'));
+    const lastSeedDate = marker.exists() ? (marker.data()?.lastSeedDate || '') : '';
+    if (lastSeedDate === todayStr) {
+      console.log('📅 Seed data already fresh for', todayStr);
+      return;
+    }
+    await seedDatabase({ silent: true });
+  } catch (err) {
+    console.error('autoSeedIfNeeded failed:', err);
   }
 };

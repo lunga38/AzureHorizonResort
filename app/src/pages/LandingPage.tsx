@@ -122,6 +122,22 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
     }
   };
 
+  // Auto-refresh demo data whenever it is stale (e.g. a new day).
+  // Replaces the need to manually click "Seed Database" — keeps
+  // events/inspections/invitations permanently in sync with "today".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { autoSeedIfNeeded } = await import('@/services/seedData');
+        if (!cancelled) await autoSeedIfNeeded({ silent: true });
+      } catch (err) {
+        console.error('Auto-seed failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const handleGuestLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setErrorMessage(null);
