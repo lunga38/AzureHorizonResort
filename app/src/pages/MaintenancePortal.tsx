@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { DamageInspectionPage } from '@/components/maintenance/DamageInspectionPage';
+import { DamageClaimsQueue } from '@/components/maintenance/DamageClaimsQueue';
 
 import { 
   Wrench, 
@@ -350,7 +350,7 @@ export function MaintenancePortal() {
 
         {/* CONDITIONAL VIEW RENDERING */}
         {activeTab === 'damage-claims' ? (
-          <DamageInspectionPage />
+          <DamageClaimsQueue />
         ) : (
         <>
             <div className="grid gap-4">

@@ -6,7 +6,7 @@ import { DigitalReceipt } from '@/components/DigitalReceipt';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ReceiptText, ChevronLeft, CreditCard, Lock, FileDown } from 'lucide-react';
+import { Loader2, ReceiptText, ChevronLeft, CreditCard, Lock, FileDown, FileText } from 'lucide-react';
 import type { User as AppUser } from '@/types';
 import { usePaystackPayment } from 'react-paystack';
 import { fetchAllGuestCharges } from '@/services/firebase-services';
@@ -29,6 +29,8 @@ export function BillingView({ onBack }: BillingViewProps) {
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [isDownloadingDamageInvoice, setIsDownloadingDamageInvoice] = useState<string | null>(null);
 
   const currentUser = user as AuthUserBridge;
   const currentUserId = currentUser?.id || currentUser?.uid;
@@ -85,6 +87,14 @@ export function BillingView({ onBack }: BillingViewProps) {
           const timeB = b.createdAt?.seconds || new Date(b.date || 0).getTime() / 1000 || 0;
           return timeB - timeA;
         }));
+
+        // 4. Fetch Official Damage/Liability Invoices
+        const ivq = query(
+          collection(db, "invoices"),
+          where("guestId", "==", currentUserId)
+        );
+        const ivSnap = await getDocs(ivq);
+        setInvoices(ivSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (error) {
         console.error("Error fetching billing data:", error);
       } finally {
@@ -215,6 +225,35 @@ export function BillingView({ onBack }: BillingViewProps) {
     }
   };
 
+  const handleDownloadDamageInvoice = async (inv: any) => {
+    setIsDownloadingDamageInvoice(inv.id);
+    try {
+      let html = inv.pdfHtml;
+      if (!html) {
+        html = getProfessionalPDFHTML({
+          title: 'DAMAGE LIABILITY INVOICE',
+          guestName: currentUser?.name || inv.guestName || 'Guest',
+          details: [
+            { label: 'Invoice Number', value: inv.invoiceNumber || 'N/A' },
+            { label: 'Guest', value: currentUser?.name || inv.guestEmail || 'Guest' },
+            { label: 'Invoice Date', value: inv.sentAt ? new Date(inv.sentAt).toLocaleDateString() : new Date().toLocaleDateString() },
+            { label: 'Status', value: 'OUTSTANDING — AWAITING PAYMENT' },
+          ],
+          items: Array.isArray(inv.lineItems) ? inv.lineItems : [],
+          subtotal: inv.subtotal || 0,
+          tax: inv.tax || 0,
+          total: inv.amount || inv.subtotal || 0,
+          footer: 'This invoice covers venue repair costs assessed after your event. Payment can be settled at the front desk or via your guest billing portal.',
+        });
+      }
+      await generatePDFFromHTML(html, `${inv.invoiceNumber || 'AzureHorizon_Damage_Invoice'}.pdf`);
+    } catch (error) {
+      console.error('Error downloading damage invoice:', error);
+    } finally {
+      setIsDownloadingDamageInvoice(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -294,6 +333,60 @@ export function BillingView({ onBack }: BillingViewProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* OFFICIAL DAMAGE / LIABILITY INVOICES */}
+      {invoices.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <h3 className="font-bold text-[#1e3a5f] flex items-center gap-2">
+              <FileText className="h-5 w-5" /> Official Invoices
+            </h3>
+            <span className="text-xs text-gray-400 font-medium">{invoices.length} invoice{invoices.length === 1 ? '' : 's'}</span>
+          </div>
+
+          <div className="grid gap-4">
+            {invoices.map((inv) => (
+              <Card key={inv.id} className="border-none shadow-md border-l-4 border-l-purple-500">
+                <CardContent className="p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <Badge className="bg-purple-100 text-purple-800 border-none">Damage Invoice</Badge>
+                      <Badge className="bg-orange-100 text-orange-700 border-none">Outstanding</Badge>
+                    </div>
+                    <h4 className="font-bold text-[#1e3a5f] text-lg">{inv.invoiceNumber}</h4>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Issued {inv.sentAt ? new Date(inv.sentAt).toLocaleString() : 'Recently'}
+                      {inv.venueName ? ` · ${inv.venueName}` : ''}
+                    </p>
+                    {(inv.lineItems?.length > 0) && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        {inv.lineItems.map((li: any) => li.name).join(' • ')}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <p className="font-bold text-xl text-[#1e3a5f]">R {(inv.amount || inv.subtotal || 0).toLocaleString()}</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDownloadDamageInvoice(inv)}
+                      disabled={isDownloadingDamageInvoice === inv.id}
+                      className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                    >
+                      {isDownloadingDamageInvoice === inv.id ? (
+                        <Loader2 className="animate-spin h-4 w-4" />
+                      ) : (
+                        <FileDown className="h-4 w-4 mr-1" />
+                      )}
+                      Download PDF
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* TRANSACTION LIST */}
       <div className="space-y-4">

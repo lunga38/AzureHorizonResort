@@ -78,6 +78,7 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
       wipeCollection('refund_requests'),
       wipeCollection('live_complaints'),
       wipeCollection('event_feedback'),
+      wipeCollection('invoices'),
     ]);
     try {
       const eventReviews = await getDocs(query(collection(db, 'reviews'), where('category', '==', 'event')));
@@ -596,6 +597,8 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
         status: 'in_repair',
         inspectionId: 'INSP-2026-08-12-001',
         damageFlagged: true,
+        assignedTechnicianName: 'Kevin Du Preez',
+        startedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
         createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
         updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
         photos: [u('photo-1519710164239-da123dc03ef4'), u('photo-1504384308090-c894fdcc538d')],
@@ -796,13 +799,91 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
       ],
       generalNotes: 'Guest accepted liability. Repairs scheduled with maintenance.',
       totalCost: 18500,
-      status: 'in_repair',
+      status: 'resolved',
       inspectionId: 'INSP-POST-EV1009',
       damageFlagged: true,
+      assignedTechnicianName: 'Kevin Du Preez',
+      startedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      resolvedAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
+      repairNotes: 'Replaced both damaged umbrellas with reinforced units and re-cast three pathway light casings. All repairs tested and signed off.',
+      actualRepairCost: 17850,
       createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-      updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      updatedAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
       photos: [u('photo-1504384308090-c894fdcc538d'), u('photo-1519710164239-da123dc03ef4')],
     });
+
+    // ==========================================
+    // 15b. INVOICED DEMO DAMAGE CLAIM + OFFICIAL INVOICE (EV-1008)
+    // Shows the end state: maintenance resolved → admin ruled →
+    // invoice issued to the guest (visible in their billing portal).
+    // ==========================================
+    const dmg1004 = {
+      id: 'DMG-1004',
+      eventId: 'EV-1008',
+      bookingRef: 'EV-1008',
+      guestId: 'ndidi_emecheta',
+      guestEmail: 'ndidi.emecheta@example.com',
+      venueId: 'v-beach-pavilion',
+      venueName: 'Sunset Beach Pavilion',
+      eventDate: isoFor(dayStr(-1), '17:00'),
+      expectedAttendance: 55,
+      inspectorId: 'lerato_molefe',
+      inspectorName: 'Lerato Molefe',
+      inspectorEmail: 'l.molefe@azurehorizon.com',
+      assignedTechnicianId: 'thabo_mbeki',
+      assignedTechnicianName: 'Thabo Mbeki',
+      updatedByEmail: 'l.molefe@azurehorizon.com',
+      items: [
+        {
+          item: 'Weatherproof Table Umbrellas',
+          assetName: 'Weatherproof Table Umbrellas',
+          category: 'Grounds & Outdoor',
+          condition: 'damaged',
+          description: 'One market umbrella arm snapped and tabletop scratched during the cocktail reception.',
+          estimatedCost: 4200,
+          photo: u('photo-1486915309851-b0cc1f8a0084'),
+          photoName: 'table-umbrella-damage.jpg',
+        },
+      ],
+      generalNotes: 'Claim fully reviewed. Guest liability confirmed by admin.',
+      totalCost: 4200,
+      status: 'invoiced',
+      decision: 'APPROVED_FULL_CHARGE',
+      finalAssessedAmount: 4200,
+      resolutionReason: 'Photo evidence confirms structural damage; full repair cost charged to the guest account.',
+      invoiceNumber: 'INV-DMG-EV1008-0001',
+      inspectionId: 'INSP-POST-EV1008',
+      damageFlagged: true,
+      startedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      resolvedAt: new Date(Date.now() - 0.5 * 86400000).toISOString(),
+      repairNotes: 'Replaced umbrella arm and re-sanded the tabletop; sealed with marine-grade varnish.',
+      actualRepairCost: 4200,
+      invoicedAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
+      createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+      updatedAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
+      photos: [u('photo-1486915309851-b0cc1f8a0084')],
+    };
+    await setDoc(doc(db, 'damage_records', dmg1004.id), dmg1004);
+
+    await setDoc(doc(db, 'invoices', 'INV-DMG-EV1008-0001'), {
+      id: 'INV-DMG-EV1008-0001',
+      invoiceNumber: 'INV-DMG-EV1008-0001',
+      type: 'damage',
+      recordId: 'DMG-1004',
+      guestId: 'ndidi_emecheta',
+      guestEmail: 'ndidi.emecheta@example.com',
+      guestName: 'Ndidi Emecheta',
+      amount: 4200,
+      subtotal: 4200,
+      tax: 0,
+      lineItems: [
+        { name: 'Weatherproof Table Umbrellas', quantity: 1, price: 4200, subtotal: 4200 },
+      ],
+      sentAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
+      emailStatus: 'sent',
+      createdAt: new Date(Date.now() - 0.25 * 86400000).toISOString(),
+    });
+    console.log(`✅ Added ${demoDamage.length + 1} demo damage records incl. seeded invoice flow`);
 
     // ==========================================
     // 16. REFUND REQUESTS (admin queue)

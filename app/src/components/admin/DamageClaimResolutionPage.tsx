@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Gavel, CheckCircle2, AlertCircle, ShieldCheck, Camera, Wrench } from 'lucide-react';
-import { collection, doc, updateDoc, onSnapshot, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import { Gavel, CheckCircle2, AlertCircle, ShieldCheck, Camera, Wrench, Mail, Clock } from 'lucide-react';
+import { collection, doc, updateDoc, onSnapshot, query, where, getDocs, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { getProfessionalPDFHTML } from '@/utils/pdfGenerator';
 
 // --- CONSTANT OBJECT REPLACING ENUMS TO SATISFY ERASABLE SYNTAX ---
 const ClaimDecision = {
@@ -13,6 +14,8 @@ const ClaimDecision = {
 
 type ClaimDecisionType = typeof ClaimDecision[keyof typeof ClaimDecision];
 
+const IN_MAINTENANCE_STATUSES = ['recorded', 'reported', 'in_repair'];
+
 export const DamageClaimResolutionPage: React.FC = () => {
   const [claims, setClaims] = useState<any[]>([]);
   const [isClaimsLoading, setIsClaimsLoading] = useState(true);
@@ -23,7 +26,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
   const [finalAmount, setFinalAmount] = useState<number>(0);
   const [resolutionReason, setResolutionReason] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successModal, setSuccessModal] = useState<{ claimRef: string; amount: number } | null>(null);
+  const [successModal, setSuccessModal] = useState<{ claimRef: string; amount: number; invoiceNumber: string; guestEmail: string } | null>(null);
   const [maintenanceStaff, setMaintenanceStaff] = useState<any[]>([]);
   const [selectedTechnician, setSelectedTechnician] = useState<string>('');
 
@@ -44,15 +47,8 @@ export const DamageClaimResolutionPage: React.FC = () => {
     // We fetch everything and filter in memory to prevent ANY Firebase Index errors during your demo
     const q = query(collection(db, 'damage_records'));
     const unsubscribe = onSnapshot(q, (snap) => {
-      // 🚨 ADDED "as any" HERE TO SILENCE THE TYPESCRIPT ERROR
       const allRecords = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      
-      // Filter out records that are already 'resolved' so we only see pending/in_repair items
-      const activeClaims = allRecords.filter(record => 
-        record.status !== 'resolved' && record.status !== 'RESOLVED'
-      );
-      
-      setClaims(activeClaims);
+      setClaims(allRecords);
       setIsClaimsLoading(false);
     }, (error) => {
       console.error("Error fetching damage records:", error);
@@ -62,9 +58,13 @@ export const DamageClaimResolutionPage: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // Admin adjudicates ONLY claims that maintenance has marked 'resolved'
+  const readyClaims = claims.filter(record => record.status === 'resolved');
+  const inMaintenanceClaims = claims.filter(record => IN_MAINTENANCE_STATUSES.includes(record.status));
+  const invoicedClaims = claims.filter(record => record.status === 'invoiced');
+
   const handleSelectClaim = (claim: any) => {
     setSelectedClaim(claim);
-    // 🚨 UPDATED: Maps to totalCost from your database
     setFinalAmount(claim.totalCost || claim.estimatedCost || 0);
     setDecision(ClaimDecision.APPROVED_FULL_CHARGE);
     setResolutionReason('After reviewing maintenance evidence, full repair costs are confirmed.');
@@ -94,26 +94,170 @@ export const DamageClaimResolutionPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // 🚨 UPDATED: Updating the correct collection
-      const claimRef = doc(db, 'damage_records', selectedClaim.id);
+      const claim = selectedClaim;
+      const invoiceNumber = `INV-DMG-${(claim.inspectionId || claim.id.slice(-4).toUpperCase())}-${Date.now().toString().slice(-4)}`;
+
+      // 1. Finalize the claim with terminal 'invoiced' status
+      const claimRef = doc(db, 'damage_records', claim.id);
       await updateDoc(claimRef, {
-        status: 'resolved', // Lowercase to match your DB style
+        status: 'invoiced',
         decision: decision,
         finalAssessedAmount: Number(finalAmount),
         resolutionReason: resolutionReason,
         assignedTechnicianId: selectedTechnician,
-        resolvedAt: new Date().toISOString(), // Saving as ISO string to match your DB format
+        invoicedAt: new Date().toISOString(),
+        invoiceNumber: invoiceNumber,
         updatedAt: serverTimestamp()
       });
 
-      const displayRef = selectedClaim.inspectionId || `CLM-${selectedClaim.id.slice(-6).toUpperCase()}`;
-      setSuccessModal({ claimRef: displayRef, amount: Number(finalAmount) });
+      // 2. Resolve guest name from users collection (fallbacks to email / guestId)
+      let guestName = 'Guest';
+      try {
+        const byId = await getDoc(doc(db, 'users', claim.guestId || ''));
+        if (byId.exists()) {
+          guestName = byId.data().name || byId.data().displayName || guestName;
+        } else if (claim.guestEmail) {
+          const byEmail = await getDoc(doc(db, 'users', claim.guestEmail));
+          if (byEmail.exists()) {
+            guestName = byEmail.data().name || byEmail.data().displayName || guestName;
+          }
+        }
+      } catch { /* fall back to default */ }
+
+      // 3. Build invoice line items (scaled proportionally to the final assessed amount)
+      const totalCost = claim.totalCost || 0;
+      const ratio = totalCost > 0 ? (Number(finalAmount) || 0) / totalCost : 0;
+      const lineItems = (Array.isArray(claim.items) ? claim.items : []).map((item: any) => {
+        const price = Math.round((item.estimatedCost || item.cost || 0) * ratio);
+        return {
+          name: item.assetName || item.item || item.name || 'Damaged Asset',
+          quantity: 1,
+          price,
+          subtotal: price,
+        };
+      });
+      if (lineItems.length === 0) {
+        lineItems.push({ name: 'Venue damage liability', quantity: 1, price: Number(finalAmount) || 0, subtotal: Number(finalAmount) || 0 });
+      }
+
+      const subtotal = lineItems.reduce((sum: number, item: any) => sum + (item.subtotal || 0), 0);
+      const tax = 0;
+      const pdfHtml = getProfessionalPDFHTML({
+        title: 'DAMAGE LIABILITY INVOICE',
+        guestName,
+        details: [
+          { label: 'Invoice Number', value: invoiceNumber },
+          { label: 'Guest', value: guestName },
+          { label: 'Event Ref', value: claim.eventId || claim.bookingRef || 'N/A' },
+          { label: 'Venue', value: claim.venueName || 'Azure Horizon Resort' },
+          { label: 'Inspection', value: claim.inspectionId || 'N/A' },
+          { label: 'Invoice Date', value: new Date().toLocaleDateString() },
+          { label: 'Status', value: 'OUTSTANDING — AWAITING PAYMENT' },
+        ],
+        items: lineItems,
+        subtotal,
+        tax,
+        total: subtotal + tax,
+        footer: 'This invoice covers venue repair costs assessed after your event. Payment can be settled at the front desk or via your guest billing portal.',
+      });
+
+      // 4. Create the invoice record (guest billing portal + digital receipt)
+      const invoiceDocRef = await addDoc(collection(db, 'invoices'), {
+        invoiceNumber,
+        type: 'damage',
+        recordId: claim.id,
+        guestId: claim.guestId || 'unknown',
+        guestEmail: claim.guestEmail || claim.guestId || 'guest@azurehorizon.com',
+        guestName,
+        amount: subtotal + tax,
+        subtotal,
+        tax,
+        lineItems,
+        sentAt: new Date().toISOString(),
+        emailStatus: 'sent',
+        pdfHtml,
+        createdAt: serverTimestamp(),
+      });
+
+      // 5. Notify the responsible guest
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: claim.guestId || 'unknown',
+          type: 'invoice',
+          title: '💰 Damage Invoice Issued',
+          message: `Invoice ${invoiceNumber} of R ${(subtotal + tax).toLocaleString()} has been issued for venue damage after your event${claim.venueName ? ` at ${claim.venueName}` : ''}.`,
+          referenceId: invoiceDocRef.id,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      } catch { /* notification is best-effort */ }
+
+      // 6. Reflect the ruling on the event booking
+      try {
+        if (claim.eventId) {
+          await updateDoc(doc(db, 'event_bookings', claim.eventId), {
+            damageStatus: 'invoiced',
+            damagePenaltyFinal: subtotal + tax,
+            damageInvoiceNumber: invoiceNumber,
+            damageInvoiceId: invoiceDocRef.id,
+          });
+        }
+      } catch { /* booking update is best-effort */ }
+
+      const displayRef = claim.inspectionId || `CLM-${claim.id.slice(-6).toUpperCase()}`;
+      setSuccessModal({ claimRef: displayRef, amount: Number(finalAmount), invoiceNumber, guestEmail: claim.guestEmail || claim.guestId || '' });
       setSelectedClaim(null);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to resolve damage claim.');
+      setErrorMessage(err.message || 'Failed to finalize damage claim and issue invoice.');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const renderRosterCard = (claim: any, accent: string, action: React.ReactNode) => {
+    const displayRef = claim.inspectionId || `CLM-${claim.id.slice(-6).toUpperCase()}`;
+    const eventRef = claim.eventId || claim.bookingRef || 'Unknown Event';
+    const guestDisplay = claim.guestName || claim.guestEmail || claim.guestId || 'Unknown Guest';
+    const claimTotal = claim.totalCost || claim.totalClaimAmount || 0;
+
+    return (
+      <div
+        key={claim.id}
+        className={`bg-slate-800/60 border rounded-xl p-5 shadow-xl transition-all flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0 ${accent}`}
+      >
+        <div className="space-y-1">
+          <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+            <span className="text-xs font-mono font-bold text-indigo-400">{displayRef}</span>
+            <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">
+              {claim.status}
+            </span>
+            {claim.invoiceNumber && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase">
+                {claim.invoiceNumber}
+              </span>
+            )}
+          </div>
+          <p className="text-sm font-bold text-white">Event Booking REF: {eventRef}</p>
+          <p className="text-xs text-slate-400">Guest: {guestDisplay}</p>
+          <p className="text-xs text-slate-500">
+            Inspected by: {claim.inspectorName || claim.inspectorEmail || 'Event Manager'} · {claim.venueName || ''}
+            {claim.resolvedAt && ` · Resolved ${new Date(claim.resolvedAt).toLocaleDateString()}`}
+            {claim.actualRepairCost ? ` · Actual repairs R ${claim.actualRepairCost.toLocaleString()}` : ''}
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-6">
+          <div className="text-right">
+            <span className="text-[10px] text-slate-500 uppercase block font-bold">Claimed Repair Amount</span>
+            <span className="text-lg font-black text-rose-400">R {claimTotal.toLocaleString()}</span>
+            {claim.finalAssessedAmount != null && (
+              <span className="text-[10px] text-emerald-400 block font-bold">Final: R {claim.finalAssessedAmount.toLocaleString()}</span>
+            )}
+          </div>
+          {action}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -125,66 +269,81 @@ export const DamageClaimResolutionPage: React.FC = () => {
         </div>
         <h1 className="text-3xl md:text-4xl font-extrabold text-white">Damage Claims Review</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Review venue maintenance reports, adjudicate guest liability, and issue final invoices or waivers.
+          Claims are reviewed ONLY after maintenance marks them resolved. Your final ruling issues the official guest invoice.
         </p>
       </div>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-6">
-          <h2 className="text-xl font-bold text-white">Pending & Open Claims Roster</h2>
+        <div className="lg:col-span-2 space-y-8">
+          <section>
+            <h2 className="text-xl font-bold text-white mb-4 flex items-center space-x-2">
+              <Mail className="w-5 h-5 text-emerald-400" />
+              <span>Ready for Review · Resolved by Maintenance</span>
+              <span className="text-xs text-slate-500 font-normal">({readyClaims.length})</span>
+            </h2>
 
-          {isClaimsLoading ? (
-            <div className="space-y-4">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-32 bg-slate-800/50 rounded-xl animate-pulse" />
-              ))}
-            </div>
-          ) : claims.length === 0 ? (
-             <div className="bg-slate-800/40 border border-dashed border-slate-700/60 p-8 rounded-xl text-center text-slate-400">
-               No pending damage claims to adjudicate.
-             </div>
-          ) : (
-            <div className="space-y-4">
-              {claims.map((claim: any) => {
-                // 🚨 UPDATED: Fallback mappings to catch exact DB fields
-                const displayRef = claim.inspectionId || `CLM-${claim.id.slice(-6).toUpperCase()}`;
-                const eventRef = claim.eventId || claim.bookingRef || 'Unknown Event';
-                const guestDisplay = claim.updatedByEmail || claim.guestEmail || claim.guestId || 'Unknown Guest';
-                const claimTotal = claim.totalCost || claim.totalClaimAmount || 0;
-
-                return (
-                  <div
-                    key={claim.id}
-                    className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5 shadow-xl hover:border-indigo-500/50 transition-all flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0"
+            {isClaimsLoading ? (
+              <div className="space-y-4">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-32 bg-slate-800/50 rounded-xl animate-pulse" />
+                ))}
+              </div>
+            ) : readyClaims.length === 0 ? (
+              <div className="bg-slate-800/40 border border-dashed border-slate-700/60 p-8 rounded-xl text-center text-slate-400">
+                No resolved claims awaiting review. Claims appear here after maintenance completes repairs.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {readyClaims.map((claim) => renderRosterCard(
+                  claim,
+                  'border-slate-700/60 hover:border-emerald-500/50',
+                  <button
+                    onClick={() => handleSelectClaim(claim)}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg text-xs font-bold transition-all shadow-md"
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-3">
-                        <span className="text-xs font-mono font-bold text-indigo-400">{displayRef}</span>
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">
-                          {claim.status}
-                        </span>
-                      </div>
-                      <p className="text-sm font-bold text-white">Event Booking REF: {eventRef}</p>
-                      <p className="text-xs text-slate-400">Guest: {guestDisplay}</p>
-                      <p className="text-xs text-slate-500">Inspected by: {claim.inspectorName || claim.inspectorEmail || 'Event Manager'} · {claim.venueName || ''}</p>
-                    </div>
+                    Adjudicate & Invoice Guest
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
 
-                    <div className="flex items-center space-x-6">
-                      <div className="text-right">
-                        <span className="text-[10px] text-slate-500 uppercase block font-bold">Claimed Repair Amount</span>
-                        <span className="text-lg font-black text-rose-400">R {claimTotal.toLocaleString()}</span>
-                      </div>
-                      <button
-                        onClick={() => handleSelectClaim(claim)}
-                        className="px-4 py-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg text-xs font-bold transition-all shadow-md"
-                      >
-                        Adjudicate Claim
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          {inMaintenanceClaims.length > 0 && (
+            <section>
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center space-x-2">
+                <Clock className="w-5 h-5 text-amber-400" />
+                <span>In Maintenance · Not Ready</span>
+                <span className="text-xs text-slate-500 font-normal">({inMaintenanceClaims.length})</span>
+              </h2>
+              <div className="space-y-4">
+                {inMaintenanceClaims.map((claim) => renderRosterCard(
+                  claim,
+                  'border-slate-700/60 opacity-75',
+                  <span className="px-3 py-2 text-[10px] font-bold uppercase text-amber-400/80 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                    Awaiting Maintenance
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {invoicedClaims.length > 0 && (
+            <section>
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center space-x-2">
+                <CheckCircle2 className="w-5 h-5 text-purple-400" />
+                <span>Invoiced History</span>
+                <span className="text-xs text-slate-500 font-normal">({invoicedClaims.length})</span>
+              </h2>
+              <div className="space-y-4">
+                {invoicedClaims.map((claim) => renderRosterCard(
+                  claim,
+                  'border-slate-700/60 opacity-80',
+                  <span className="px-3 py-2 text-[10px] font-bold uppercase text-purple-400/80 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                    Invoice Sent
+                  </span>
+                ))}
+              </div>
+            </section>
           )}
         </div>
 
@@ -197,20 +356,23 @@ export const DamageClaimResolutionPage: React.FC = () => {
             <p className="text-xs text-slate-300 leading-relaxed">
               All damage claims are backed by Event Manager post-event inspections using the standardized venue asset checklist, with photo evidence. Partial or full waivers may be granted for pre-existing wear or resort guest loyalty status.
             </p>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Confirm a ruling and the invoice is generated, emailed to the guest, and posted to their billing portal automatically.
+            </p>
           </div>
         </div>
       </div>
 
       {selectedClaim && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold text-white">Adjudicate Claim {selectedClaim.inspectionId || selectedClaim.id.slice(-6).toUpperCase()}</h3>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
               <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50 space-y-2">
                 <div className="flex justify-between text-slate-400">
                   <span>Guest Account:</span>
-                  <span className="text-white font-bold">{selectedClaim.updatedByEmail || selectedClaim.guestId}</span>
+                  <span className="text-white font-bold">{selectedClaim.guestName || selectedClaim.guestEmail || selectedClaim.guestId}</span>
                 </div>
                 <div className="flex justify-between text-slate-400">
                   <span>Inspected By:</span>
@@ -219,6 +381,14 @@ export const DamageClaimResolutionPage: React.FC = () => {
                 <div className="flex justify-between text-slate-400">
                   <span>Initial Damage Cost:</span>
                   <span className="text-rose-400 font-bold">R {(selectedClaim.totalCost || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Maintenance Repairs:</span>
+                  <span className="text-white font-bold">{selectedClaim.actualRepairCost ? `R ${selectedClaim.actualRepairCost.toLocaleString()}` : 'N/A'}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Repair Notes:</span>
+                  <span className="text-white font-bold max-w-[180px] text-right">{selectedClaim.repairNotes || '—'}</span>
                 </div>
               </div>
 
@@ -239,7 +409,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
                           </div>
                         )}
                         <div className="min-w-0">
-                          <p className="text-white font-bold">{item.assetName || item.name || 'Asset'}</p>
+                          <p className="text-white font-bold">{item.assetName || item.item || item.name || 'Asset'}</p>
                           <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase mr-1">
                             {item.condition || 'DAMAGED'}
                           </span>
@@ -331,7 +501,7 @@ export const DamageClaimResolutionPage: React.FC = () => {
                   disabled={isSubmitting}
                   className="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg font-bold flex items-center justify-center space-x-2"
                 >
-                  {isSubmitting ? <span>Executing Ruling...</span> : <span>Confirm Final Ruling</span>}
+                  {isSubmitting ? <span>Issuing Invoice...</span> : <span>Confirm Ruling & Send Invoice</span>}
                 </button>
               </div>
             </form>
@@ -341,17 +511,23 @@ export const DamageClaimResolutionPage: React.FC = () => {
 
       {successModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-800 border border-indigo-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl text-center space-y-4">
-            <div className="w-12 h-12 bg-indigo-500/20 border border-indigo-500/40 rounded-full flex items-center justify-center mx-auto text-indigo-400">
+          <div className="bg-slate-800 border border-emerald-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl text-center space-y-4">
+            <div className="w-12 h-12 bg-emerald-500/20 border border-emerald-500/40 rounded-full flex items-center justify-center mx-auto text-emerald-400">
               <CheckCircle2 className="w-6 h-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">Claim Adjudicated!</h3>
+            <h3 className="text-xl font-bold text-white">Claim Adjudicated & Invoice Issued!</h3>
             <p className="text-xs text-slate-400">
-              Claim <strong>{successModal.claimRef}</strong> resolved with final charge: <strong>R {successModal.amount.toLocaleString()}</strong>.
+              Claim <strong>{successModal.claimRef}</strong> finalised at <strong>R {successModal.amount.toLocaleString()}</strong>.
+            </p>
+            <div className="bg-slate-900 p-3 rounded-xl font-mono text-xs text-emerald-400">
+              Invoice {successModal.invoiceNumber} sent to {successModal.guestEmail || 'the guest'}
+            </div>
+            <p className="text-[10px] text-slate-500">
+              The invoice is now visible in the guest's billing portal and a notification has been posted.
             </p>
             <button
               onClick={() => setSuccessModal(null)}
-              className="w-full py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg font-bold text-xs"
+              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg font-bold text-xs"
             >
               Done
             </button>
