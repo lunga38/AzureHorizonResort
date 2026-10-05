@@ -14,6 +14,7 @@ import { TourGuideDashboard } from '@/pages/TourGuideDashboard';
 import { SpaDashboard } from '@/pages/SpaDashboard';
 import { EventManagerDashboard } from '@/pages/EventManagerDashboard';
 import { RegistrationPage } from '@/pages/RegistrationPage';
+import { NpoApplicationPage } from '@/pages/NpoApplicationPage';
 import { NpoPortalPage } from '@/pages/NpoPortalPage';
 
 // Import Pages & Components
@@ -66,6 +67,7 @@ function DashboardRouter() {
     case 'kitchen_manager': return <KitchenDisplay />;
     case 'npo_rep': return <NpoPortalPage />;
     case 'staff': return <ServiceDashboard />;
+    case 'collector': return <ServiceDashboard />;
     case 'housekeeping':
     case 'waitstaff': 
     case 'delivery': return <ServiceDashboard />;
@@ -80,6 +82,7 @@ function RoleBasedRoute() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [isApplyingAsNpo, setIsApplyingAsNpo] = useState(false);
 
   if (isLoading) {
     return (
@@ -91,10 +94,16 @@ function RoleBasedRoute() {
   }
 
   if (!isAuthenticated || !user) {
+    if (isApplyingAsNpo) {
+      return <NpoApplicationPage onBack={() => setIsApplyingAsNpo(false)} />;
+    }
     return isRegistering ? (
       <RegistrationPage onBack={() => setIsRegistering(false)} />
     ) : (
-      <LandingPage onRegisterClick={() => setIsRegistering(true)} />
+      <LandingPage
+        onRegisterClick={() => setIsRegistering(true)}
+        onNpoApplyClick={() => setIsApplyingAsNpo(true)}
+      />
     );
   }
 

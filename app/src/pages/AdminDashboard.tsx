@@ -17,6 +17,10 @@ import { ReviewManager } from '@/components/admin/ReviewManager';
 import { AdminRefundReview } from '@/components/admin/AdminRefundReview'; 
 import { DamageClaimResolutionPage } from '@/components/admin/DamageClaimResolutionPage'; // 🚨 Added Damage Claims component
 import { NpoVerificationQueue } from '@/components/admin/NpoVerificationQueue';
+import { RosterBuilder } from '@/components/workforce/RosterBuilder';
+import { OpenShiftsBoard } from '@/components/workforce/OpenShiftsBoard';
+import { LeaveManagement } from '@/components/workforce/LeaveManagement';
+import { SwapBoard } from '@/components/workforce/SwapBoard';
 import { ImpactReportView } from '@/components/admin/ImpactReportView';
 import { AttendanceLedger } from '@/components/admin/AttendanceLedger';
 import { StaffQRTools } from '@/pages/StaffQRTools';
@@ -24,10 +28,11 @@ import { StaffQRTools } from '@/pages/StaffQRTools';
 import { 
   TrendingUp, Users, Hotel, DollarSign, AlertCircle, BarChart3,
   Download, Star, Building2, Loader2, Compass, UserCheck,
-  LayoutDashboard, Sparkles, MessageSquare, Gavel, ScanLine, Leaf, ClipboardCheck
+  LayoutDashboard, Sparkles, MessageSquare, Gavel, ScanLine, Leaf, ClipboardCheck,
+  CalendarCheck2, Zap, CalendarClock, ArrowLeftRight
 } from 'lucide-react';
 
-type AdminTab = 'overview' | 'tour-management' | 'tour-checkin' | 'reviews' | 'refunds' | 'damage-claims' | 'qr-tools' | 'npo-verification' | 'impact' | 'attendance';
+type AdminTab = 'overview' | 'tour-management' | 'tour-checkin' | 'reviews' | 'refunds' | 'damage-claims' | 'qr-tools' | 'npo-verification' | 'impact' | 'attendance' | 'roster' | 'open-shifts' | 'leave' | 'swaps';
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: 'overview',         label: 'Executive Overview',  icon: LayoutDashboard },
@@ -40,6 +45,10 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: React.ElementType }[] = [
   { id: 'npo-verification', label: 'NPO Verification',    icon: Building2 },
   { id: 'impact',           label: 'Impact Reports',      icon: Leaf },
   { id: 'attendance',       label: 'Attendance',          icon: ClipboardCheck },
+  { id: 'roster',           label: 'Roster Builder',      icon: CalendarCheck2 },
+  { id: 'open-shifts',      label: 'Open Shifts',         icon: Zap },
+  { id: 'leave',            label: 'Leave Requests',      icon: CalendarClock },
+  { id: 'swaps',            label: 'Shift Swaps',         icon: ArrowLeftRight },
 ];
 
 export function AdminDashboard() {
@@ -444,6 +453,12 @@ export function AdminDashboard() {
         {activeTab === 'npo-verification' && <NpoVerificationQueue />}
         {activeTab === 'impact' && <ImpactReportView />}
         {activeTab === 'attendance' && <AttendanceLedger />}
+        {/* Workforce: the admin can build/edit rosters, publish and remove open
+            shifts, and decide leave/swap requests without leaving this page. */}
+        {activeTab === 'roster' && <RosterBuilder />}
+        {activeTab === 'open-shifts' && <OpenShiftsBoard managerView />}
+        {activeTab === 'leave' && <LeaveManagement managerView />}
+        {activeTab === 'swaps' && <SwapBoard managerView />}
         
       </div>
 

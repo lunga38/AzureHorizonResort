@@ -14,6 +14,9 @@ export type DonationStatus =
   | 'safety_verified_unassigned'
   | 'allocated_awaiting_claim'
   | 'claimed_ready_for_scheduling'
+  // #8: the NPO has requested a slot and is waiting for a courier to accept.
+  // No executable QR pass exists in this state.
+  | 'collection_requested'
   | 'collection_scheduled'
   | 'collected_completed'
   | 'cancelled';
@@ -92,6 +95,11 @@ export interface SafetyChecklist {
 export interface DonationBatch {
   id: string;
   batchId: string;
+  // #4/#7 closure audit: why this record left the active queues, by whom, when.
+  cancelledReason?: string;
+  closureReason?: ClosureReason;
+  closedBy?: string;
+  closedAt?: string;
   itemName: string;
   mealCategory: string;
   portionCount: number;
@@ -232,9 +240,57 @@ export interface OpenShift {
   premiumRate?: number;
   urgency?: 'normal' | 'urgent' | 'critical';
   status: OpenShiftStatus;
+  // How many employees this surge needs (UC44 requested/filled tracking).
+  // Legacy documents without this field are treated as a single slot.
+  requestedCount?: number;
+  // UIDs of employees who have taken a slot. `claimedBy` remains the first
+  // claimer for backwards compatibility with the claim transaction.
+  assignees?: string[];
   claimedBy?: string;
   claimedAt?: string;
   createdAt: string;
+}
+
+/** Slots requested vs filled for one open shift. */
+export interface OpenShiftFill {
+  requested: number;
+  filled: number;
+  remaining: number;
+  complete: boolean;
+}
+
+export function openShiftFill(s: Pick<OpenShift, 'assignees' | 'claimedBy' | 'requestedCount' | 'status'>): OpenShiftFill {
+  const requested = Math.max(1, Number(s.requestedCount) || 1);
+  const assignees = Array.isArray(s.assignees) && s.assignees.length ? s.assignees : s.claimedBy ? [s.claimedBy] : [];
+  const filled = assignees.length;
+  return { requested, filled, remaining: Math.max(0, requested - filled), complete: filled >= requested || s.status === 'filled' };
+}
+
+/**
+ * Absolute instant for a calendar date + 'HH:mm' in the WORKSITE timezone
+ * (Africa/Johannesburg = UTC+2, no DST). Shift times are wall-clock strings for
+ * the resort, so elapsed checks must be anchored there rather than to the
+ * browser's timezone. Mirrors the mobile helper exactly.
+ */
+export function jhbInstant(date: string, hhmm: string): number {
+  const [y, m, d] = String(date || '').split('-').map(Number);
+  const [hh, mm] = String(hhmm || '00:00').split(':').map(Number);
+  if (!y || !m || !d || !Number.isFinite(hh) || !Number.isFinite(mm)) return NaN;
+  return Date.UTC(y, m - 1, d, hh - 2, mm, 0);
+}
+
+/** An open shift's window end as an absolute instant (worksite timezone). */
+export function openShiftEndsAt(s: Pick<OpenShift, 'date' | 'endTime'>): number {
+  return jhbInstant(s.date, s.endTime || '23:59');
+}
+
+/**
+ * Elapsed open shifts: the date has passed, or today but the shift has already
+ * finished. These are hidden from staff boards and auto-closed for managers.
+ */
+export function isOpenShiftElapsed(s: Pick<OpenShift, 'date' | 'endTime'>, now: number = Date.now()): boolean {
+  const end = openShiftEndsAt(s);
+  return Number.isFinite(end) && end < now;
 }
 
 export interface AttendanceException {

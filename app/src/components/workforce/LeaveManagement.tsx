@@ -12,6 +12,8 @@ import {
   listenLeaveRequests, reviewLeaveRequest,
 } from '@/services/increment2-services';
 import { formatStatus } from '@/utils/statusLabels';
+import { currentWeekStart } from '@/utils/dates';
+import { computeLeaveBalance, workingDaysBetween, isAnnualLeaveType, leaveBalanceTone } from '@/utils/leaveBalance';
 import type { LeaveRequest } from '@/types/increment2';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -19,7 +21,7 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 
 export function LeaveManagement({ managerView }: { managerView?: boolean }) {
   const { user } = useAuth();
-  const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [weekStart, setWeekStart] = useState(() => currentWeekStart());
   const [slots, setSlots] = useState<Record<string, { start: string; end: string; on: boolean }>>(
     Object.fromEntries(DAYS.map((d) => [d, { start: '08:00', end: '17:00', on: true }]))
   );
@@ -38,6 +40,13 @@ export function LeaveManagement({ managerView }: { managerView?: boolean }) {
       : listenLeaveRequests((list) => setMyLeave(list.filter((l) => l.staffId === staffId)));
     return () => u1();
   }, [managerView, staffId]);
+
+  // Balance is derived from this employee's own leave history — never stored.
+  const balance = computeLeaveBalance(staffId, myLeave);
+  const requestedDays = leave.start && leave.end ? workingDaysBetween(leave.start, leave.end) : 0;
+  const drawsFromAnnual = isAnnualLeaveType(leave.type);
+  const tone = leaveBalanceTone(balance.remaining, balance.entitlement);
+  const overdraw = drawsFromAnnual && requestedDays > 0 && requestedDays > balance.remaining;
 
   const saveAvailability = async () => {
     setBusy(true);
@@ -117,12 +126,31 @@ export function LeaveManagement({ managerView }: { managerView?: boolean }) {
           <Card>
             <CardHeader><CardTitle>Request Leave</CardTitle></CardHeader>
             <CardContent className="space-y-3">
+              <div className={`rounded-md border p-3 text-sm space-y-1 ${tone === 'low' ? 'border-red-300 bg-red-50 dark:bg-red-950/30' : tone === 'warn' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30'}`}>
+                <p className="font-semibold">
+                  Annual leave {balance.year}: {balance.remaining} of {balance.entitlement} days available
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  {balance.used} day{balance.used === 1 ? '' : 's'} taken
+                  {balance.pending > 0 ? ` · ${balance.pending} awaiting decision` : ''} · {balance.note}
+                </p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>Type</Label><Input value={leave.type} onChange={(e) => setLeave((p) => ({ ...p, type: e.target.value }))} placeholder="Annual / Sick / Family" /></div>
                 <div><Label>Start</Label><Input type="date" value={leave.start} onChange={(e) => setLeave((p) => ({ ...p, start: e.target.value }))} /></div>
                 <div><Label>End</Label><Input type="date" value={leave.end} onChange={(e) => setLeave((p) => ({ ...p, end: e.target.value }))} /></div>
               </div>
-              <Button onClick={submitLeave} disabled={busy || !leave.start || !leave.end}>Submit leave request</Button>
+              {requestedDays > 0 && (
+                <p className={`text-sm ${overdraw ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                  This request covers {requestedDays} working day{requestedDays === 1 ? '' : 's'}.
+                  {overdraw
+                    ? ` That exceeds the ${balance.remaining} day${balance.remaining === 1 ? '' : 's'} available — shorten it or choose a different leave type.`
+                    : drawsFromAnnual
+                      ? ` ${balance.remaining - requestedDays} day${balance.remaining - requestedDays === 1 ? '' : 's'} would remain.`
+                      : ' This type does not draw on annual leave.'}
+                </p>
+              )}
+              <Button onClick={submitLeave} disabled={busy || !leave.start || !leave.end || overdraw}>Submit leave request</Button>
               {myLeave.length > 0 && (
                 <div className="pt-2 space-y-1">
                   {myLeave.map((l) => (

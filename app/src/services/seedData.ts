@@ -1,8 +1,7 @@
 import { db, rtdb } from '../lib/firebase';
-import { doc, setDoc, collection, addDoc, getDocs, deleteDoc, query, where, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, getDoc, getDocs, deleteDoc, query, where } from 'firebase/firestore';
 import { ref, set } from 'firebase/database';
 import { seedTables } from './tableSeedData';
-import { signQrPayload } from './qr-signing';
 
 // ==========================================
 // ONLINE IMAGE LIBRARY (Unsplash CDN)
@@ -80,16 +79,6 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
       wipeCollection('live_complaints'),
       wipeCollection('event_feedback'),
       wipeCollection('invoices'),
-      // Increment 2 (UC34–UC45) demo data — wiped + reseeded daily like the rest.
-      wipeCollection('npo_partners'),
-      wipeCollection('donation_batches'),
-      wipeCollection('donation_checkins'),
-      wipeCollection('staff_availability'),
-      wipeCollection('leave_requests'),
-      wipeCollection('shift_rosters'),
-      wipeCollection('shift_swaps'),
-      wipeCollection('open_shifts'),
-      wipeCollection('attendance_exceptions'),
     ]);
     try {
       const eventReviews = await getDocs(query(collection(db, 'reviews'), where('category', '==', 'event')));
@@ -100,53 +89,11 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
     console.log("🧹 Wiped stale event data for a fresh seed");
 
     // ==========================================
-    // 1. STAFF ACCOUNTS (27)
+    // 1. STAFF ACCOUNTS — owned by the mobile seeder.
+    // scripts/seed-demo-data.js upserts users for the 8 demo actors
+    // (uid + email-keyed docs). This web seed no longer writes staff
+    // profiles, so it can never clobber the canonical roster. (Option A.)
     // ==========================================
-    const staffList = [
-      { id: 'bandile_maqeda', uid: 'bandile_maqeda', name: "Bandile Maqeda", role: "admin", email: "admin@azurehorizon.com", status: 'staff' },
-      { id: 'sarah_jenkins', uid: 'sarah_jenkins', name: "Sarah Jenkins", role: "admin", email: "s.jenkins@azurehorizon.com", status: 'staff' },
-      { id: 'pieter_uys', uid: 'pieter_uys', name: "Pieter-Dirk Uys", role: "admin", email: "p.uys@azurehorizon.com", status: 'staff' },
-      { id: 'sibusiso_khoza', uid: 'sibusiso_khoza', name: "Chef Sibusiso Khoza", role: "chef", email: "s.khoza@azurehorizon.com", status: 'staff' },
-      { id: 'marco_rossi', uid: 'marco_rossi', name: "Chef Marco Rossi", role: "chef", email: "m.rossi@azurehorizon.com", status: 'staff' },
-      { id: 'oliver_tambo', uid: 'oliver_tambo', name: "Chef Oliver Tambo", role: "chef", email: "o.tambo@azurehorizon.com", status: 'staff' },
-      { id: 'zuki_matola', uid: 'zuki_matola', name: "Chef Zuki Matola", role: "chef", email: "z.matola@azurehorizon.com", status: 'staff' },
-      { id: 'gordon_ramsay', uid: 'gordon_ramsay', name: "Chef Gordon Ramsay", role: "chef", email: "g.ramsay@azurehorizon.com", status: 'staff' },
-      { id: 'elena_meyer', uid: 'elena_meyer', name: "Elena Meyer", role: "front_desk", email: "e.meyer@azurehorizon.com", status: 'staff' },
-      { id: 'lindiwe_buthelezi', uid: 'lindiwe_buthelezi', name: "Lindiwe Buthelezi", role: "front_desk", email: "l.buthelezi@azurehorizon.com", status: 'staff' },
-      { id: 'anita_desai', uid: 'anita_desai', name: "Anita Desai", role: "front_desk", email: "a.desai@azurehorizon.com", status: 'staff' },
-      { id: 'grace_kelly', uid: 'grace_kelly', name: "Grace Kelly", role: "front_desk", email: "g.kelly@azurehorizon.com", status: 'staff' },
-      { id: 'musa_ndlovu', uid: 'musa_ndlovu', name: "Musa Ndlovu", role: "tour_guide", email: "m.ndlovu@azurehorizon.com", status: 'staff' },
-      { id: 'david_attenborough', uid: 'david_attenborough', name: "David Attenborough", role: "tour_guide", email: "d.attenborough@azurehorizon.com", status: 'staff' },
-      { id: 'lesego_tau', uid: 'lesego_tau', name: "Lesego Tau", role: "tour_guide", email: "l.tau@azurehorizon.com", status: 'staff' },
-      { id: 'tanya_smith', uid: 'tanya_smith', name: "Tanya Smith", role: "tour_guide", email: "t.smith@azurehorizon.com", status: 'staff' },
-      { id: 'johan_van_wyk', uid: 'johan_van_wyk', name: "Johan van Wyk", role: "spa_staff", email: "j.vanwyk@azurehorizon.com", status: 'staff' },
-      { id: 'nomsa_mkhize', uid: 'nomsa_mkhize', name: "Nomsa Mkhize", role: "spa_staff", email: "n.mkhize@azurehorizon.com", status: 'staff' },
-      { id: 'claire_foster', uid: 'claire_foster', name: "Claire Foster", role: "spa_staff", email: "c.foster@azurehorizon.com", status: 'staff' },
-      { id: 'kabelo_modise', uid: 'kabelo_modise', name: "Kabelo Modise", role: "spa_staff", email: "k.modise@azurehorizon.com", status: 'staff' },
-      { id: 'thabo_mbeki', uid: 'thabo_mbeki', name: "Thabo Mbeki", role: "maintenance", email: "t.mbeki@azurehorizon.com", status: 'staff' },
-      { id: 'kevin_dupreez', uid: 'kevin_dupreez', name: "Kevin Du Preez", role: "maintenance", email: "k.dupreez@azurehorizon.com", status: 'staff' },
-      { id: 'chris_evans', uid: 'chris_evans', name: "Chris Evans", role: "housekeeping", email: "c.evans@azurehorizon.com", status: 'staff' },
-      { id: 'frikkie_louw', uid: 'frikkie_louw', name: "Frikkie Louw", role: "housekeeping", email: "f.louw@azurehorizon.com", status: 'staff' },
-      { id: 'zanele_moyo', uid: 'zanele_moyo', name: "Zanele Moyo", role: "housekeeping", email: "z.moyo@azurehorizon.com", status: 'staff' },
-      { id: 'sipho_dlamini', uid: 'sipho_dlamini', name: "Sipho Dlamini", role: "event_manager", email: "s.dlamini@azurehorizon.com", status: 'staff' },
-      { id: 'lerato_molefe', uid: 'lerato_molefe', name: "Lerato Molefe", role: "event_manager", email: "l.molefe@azurehorizon.com", status: 'staff' },
-    ];
-
-    for (const staff of staffList) {
-      await setDoc(doc(db, 'users', staff.email), staff);
-    }
-    console.log(`✅ Added ${staffList.length} staff accounts`);
-
-    const additionalStaff = [
-      { id: 'kim_kitchen', uid: 'kim_kitchen', name: "Kim Kitchen", displayName: "Kim Kitchen", title: "Kitchen Manager", role: "kitchen_manager", subRole: "kitchen_manager", email: "kim.kitchen@azurehorizon.demo", status: 'staff' },
-      { id: 'sam_staff', uid: 'sam_staff', name: "Sam Staff", displayName: "Sam Staff", title: "Catering Staff", role: "staff", subRole: "catering_staff", email: "sam.staff@azurehorizon.demo", status: 'staff' },
-      { id: 'joe_staff', uid: 'joe_staff', name: "Joe Staff", displayName: "Joe Staff", title: "Housekeeping", role: "staff", subRole: "housekeeping", email: "joe.staff@azurehorizon.demo", status: 'staff' },
-    ];
-
-    for (const staff of additionalStaff) {
-      await setDoc(doc(db, 'users', staff.email), staff);
-    }
-    console.log(`✅ Added ${additionalStaff.length} additional staff accounts`);
 
     // ==========================================
     // 2. GUEST ACCOUNTS (20)
@@ -1018,160 +965,412 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
     });
 
     // ==========================================
-    // 19. INCREMENT 2 — NPO PARTNERS (UC34: 1 pending, 2 approved)
+    // 19. MOBILE DATASET PORT — my-mobile-app/scripts/seed-demo-data.js
+    // (seedSet azure-demo-v2). Mirrors the mobile demo: same stable doc ids,
+    // payloads and Africa/Johannesburg date rules — but UPSERT-ONLY. The
+    // mobile Admin-SDK script owns users / worksites / settings / notifications
+    // and full-refresh deletes; this web seed never deletes, so it cannot
+    // destroy data only the mobile side produces. (Option A + B.)
+    // Actor uids are read from the users/{email} docs the mobile script wrote.
     // ==========================================
-    const seedNpos = [
-      {
-        npoId: 'NPO-DURBAN-CARE', organisationName: 'Durban Community Care', registrationNumber: 'NPO-2014-118822',
-        pboNumber: 'PBO-930045117', contactName: 'Melusi Mabanga', email: 'npo1@azurehorizon.demo',
-        phone: '+27315550101', serviceAreas: ['Umlazi', 'Chatsworth'], beneficiaryCapacity: 450,
-        transportType: 'Refrigerated van', refrigerationAvailable: true, complianceDocuments: [],
-        verificationStatus: 'approved', verifiedBy: 'bandile_maqeda', verifiedAt: new Date(Date.now() - 6 * 86400000).toISOString(),
-        lastDecision: { performedBy: 'bandile_maqeda', performedAt: new Date(Date.now() - 6 * 86400000).toISOString(), action: 'npo_approved', reason: null },
-        createdAt: new Date(Date.now() - 7 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 6 * 86400000).toISOString(),
-      },
-      {
-        npoId: 'NPO-PHOENIX-FOOD', organisationName: 'Phoenix Food Rescue', registrationNumber: 'NPO-2019-203311',
-        pboNumber: 'PBO-930061204', contactName: 'Priya Naidoo', email: 'npo2@azurehorizon.demo',
-        phone: '+27315550102', serviceAreas: ['Phoenix', 'Umhlanga'], beneficiaryCapacity: 280,
-        transportType: 'Bakkie + cooler boxes', refrigerationAvailable: false, complianceDocuments: [],
-        verificationStatus: 'approved', verifiedBy: 'bandile_maqeda', verifiedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-        lastDecision: { performedBy: 'bandile_maqeda', performedAt: new Date(Date.now() - 5 * 86400000).toISOString(), action: 'npo_approved', reason: null },
-        createdAt: new Date(Date.now() - 6 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-      },
-      {
-        npoId: 'NPO-UMLAZI-KITCHEN', organisationName: 'Umlazi Soup Kitchen', registrationNumber: 'NPO-2023-310077',
-        contactName: 'Bandile Maqeda', email: 'npo3@azurehorizon.demo',
-        phone: '+27315550103', serviceAreas: ['Umlazi'], beneficiaryCapacity: 120,
-        transportType: 'Minibus', refrigerationAvailable: false, complianceDocuments: [],
-        verificationStatus: 'pending',
-        createdAt: new Date(Date.now() - 1 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-      },
-    ];
-    for (const npo of seedNpos) await addDoc(collection(db, 'npo_partners'), npo);
-    console.log(`✅ Added ${seedNpos.length} NPO partners`);
+    {
+      const stripUndefined = (v: unknown): unknown => {
+        if (v === null || typeof v !== 'object') return v;
+        if (Array.isArray(v)) return v.map(stripUndefined);
+        const out: Record<string, unknown> = {};
+        for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+          if (val !== undefined) out[k] = stripUndefined(val);
+        }
+        return out;
+      };
 
-    // ==========================================
-    // 20. INCREMENT 2 — DONATION BATCHES (UC35–UC39: 8 across statuses)
-    // ==========================================
-    const fullChecks = { coreTemperatureVerified: true, packagingIntegrityVerified: true, allergenLabelsVerified: true, safePreparationWindowVerified: true };
-    const mkBatch = (batchId: string, item: string, cat: string, portions: number, kg: number, allergens: string[], status: string, extra: Record<string, unknown> = {}) => ({
-      batchId, itemName: item, mealCategory: cat, portionCount: portions, estimatedWeightKg: kg, allergens,
-      preparedAt: new Date(Date.now() - 5 * 3600000).toISOString(),
-      expiryAt: new Date(Date.now() + 19 * 3600000).toISOString(),
-      safetyChecklist: fullChecks,
-      safetyPhotoUrl: u('photo-1546069901-ba9599a7e63c'),
-      photoMeta: null, status, qrConsumed: false,
-      createdBy: 'sibusiso_khoza', createdAt: new Date(Date.now() - 4 * 3600000).toISOString(),
-      updatedAt: new Date(Date.now() - 4 * 3600000).toISOString(), ...extra,
-    });
-    const seedBatches = [
-      mkBatch('DON-SEED-01', 'Chicken curry + rice', 'Cooked meals', 60, 24, ['dairy'], 'safety_verified_unassigned'),
-      mkBatch('DON-SEED-02', 'Vegetable soup', 'Soups', 40, 16, [], 'safety_verified_unassigned'),
-      mkBatch('DON-SEED-03', 'Beef stew + samp', 'Cooked meals', 80, 32, [], 'allocated_awaiting_claim', { allocatedNpoId: 'NPO-DURBAN-CARE', allocatedAt: new Date(Date.now() - 3 * 3600000).toISOString(), allocatedBy: 'sibusiso_khoza' }),
-      mkBatch('DON-SEED-04', 'Fruit salad cups', 'Fresh produce', 50, 12, [], 'allocated_awaiting_claim', { allocatedNpoId: 'NPO-PHOENIX-FOOD', allocatedAt: new Date(Date.now() - 2 * 3600000).toISOString(), allocatedBy: 'sibusiso_khoza' }),
-      mkBatch('DON-SEED-05', 'Pasta bake trays', 'Cooked meals', 70, 28, ['gluten', 'dairy'], 'claimed_ready_for_scheduling', { allocatedNpoId: 'NPO-DURBAN-CARE', allocatedAt: new Date(Date.now() - 8 * 3600000).toISOString(), allocatedBy: 'sibusiso_khoza', claimedBy: 'npo1@azurehorizon.demo', claimedAt: new Date(Date.now() - 6 * 3600000).toISOString(), receivingFacility: 'Umlazi Community Hall', distributionTermsAccepted: true }),
-      mkBatch('DON-SEED-07', 'Bread rolls + sandwiches', 'Bakery', 100, 20, ['gluten'], 'collected_completed', { allocatedNpoId: 'NPO-DURBAN-CARE', allocatedAt: new Date(Date.now() - 2 * 86400000).toISOString(), allocatedBy: 'sibusiso_khoza', claimedBy: 'npo1@azurehorizon.demo', claimedAt: new Date(Date.now() - 2 * 86400000 + 3600000).toISOString(), receivingFacility: 'Umlazi Community Hall', distributionTermsAccepted: true, collectedAt: new Date(Date.now() - 1 * 86400000).toISOString(), verifiedBy: 'sibusiso_khoza', qrConsumed: true }),
-      mkBatch('DON-SEED-08', 'Grilled fish + veg', 'Cooked meals', 45, 18, ['fish'], 'collected_completed', { allocatedNpoId: 'NPO-PHOENIX-FOOD', allocatedAt: new Date(Date.now() - 3 * 86400000).toISOString(), allocatedBy: 'sibusiso_khoza', claimedBy: 'npo2@azurehorizon.demo', claimedAt: new Date(Date.now() - 3 * 86400000 + 3600000).toISOString(), receivingFacility: 'Phoenix Youth Centre', distributionTermsAccepted: true, collectedAt: new Date(Date.now() - 2 * 86400000).toISOString(), verifiedBy: 'marco_rossi', qrConsumed: true }),
-    ];
-    const batchDocIds: Record<string, string> = {};
-    for (const b of seedBatches) {
-      const r = await addDoc(collection(db, 'donation_batches'), b);
-      batchDocIds[b.batchId] = r.id;
-    }
-    // Scheduled batch with a real signed collection pass (same payload order as scheduler)
-    const schedStart = new Date(Date.now() + 2 * 3600000).toISOString();
-    const schedEnd = new Date(Date.now() + 4 * 3600000).toISOString();
-    const schedRef = await addDoc(collection(db, 'donation_batches'), mkBatch('DON-SEED-06', 'Lamb biryani trays', 'Cooked meals', 90, 36, ['dairy'], 'claimed_ready_for_scheduling', { allocatedNpoId: 'NPO-DURBAN-CARE', allocatedAt: new Date(Date.now() - 5 * 3600000).toISOString(), allocatedBy: 'sibusiso_khoza', claimedBy: 'npo1@azurehorizon.demo', claimedAt: new Date(Date.now() - 4 * 3600000).toISOString(), receivingFacility: 'Umlazi Community Hall', distributionTermsAccepted: true }));
-    batchDocIds['DON-SEED-06'] = schedRef.id;
-    const schedPayload = { type: 'DONATION_COLLECTION', batchId: 'DON-SEED-06', batchDocId: schedRef.id, npoId: 'NPO-DURBAN-CARE', collectionWindowStart: schedStart, collectionWindowEnd: schedEnd, loadingBay: 'Bay A', issuedAt: Date.now(), nonce: 'seednonce06' };
-    const schedSig = await signQrPayload(schedPayload);
-    await updateDoc(schedRef, {
-      status: 'collection_scheduled', pickupDate: todayStr, pickupWindowStart: schedStart, pickupWindowEnd: schedEnd,
-      loadingBay: 'Bay A', courierName: 'Fanelesibonge Mdlalose', collectionQr: JSON.stringify({ ...schedPayload, sig: schedSig }),
-      collectionNonce: 'seednonce06', qrConsumed: false, updatedAt: new Date().toISOString(),
-    });
-    await addDoc(collection(db, 'donation_checkins'), {
-      batchId: 'DON-SEED-07', npoId: 'NPO-DURBAN-CARE', courierName: 'Fanelesibonge Mdlalose',
-      method: 'donation_scan', collectionWindow: 'seed window', loadingBay: 'Bay A',
-      sealVerified: true, signature: 'Fanelesibonge Mdlalose', collectedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-      verifiedBy: 'sibusiso_khoza', wasOffline: false, idempotencyKey: 'seed07:seednonce07',
-    });
-    console.log(`✅ Added 8 donation batches + 1 collection record`);
+      // JHB (UTC+02:00 year-round): calendar math on date strings, wall-time
+      // stamps as `${date}T${hhmm}:00+02:00` — matches the mobile script's
+      // local-time helpers regardless of the browser timezone.
+      const jhbToday = () =>
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const jAddDays = (s: string, n: number) => {
+        const d = new Date(`${s}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + n);
+        return d.toISOString().slice(0, 10);
+      };
+      const jMonday = () => {
+        const d = new Date(`${jhbToday()}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+        return d.toISOString().slice(0, 10);
+      };
+      const jAt = (dateStr: string, hhmm: string) => new Date(`${dateStr}T${hhmm}:00+02:00`).toISOString();
+      const nowIso = () => new Date().toISOString();
+      const TODAY = jhbToday();
+      const WEEK = jMonday();
+      const NEXT_WEEK = jAddDays(WEEK, 7);
+      const WEEK_AFTER = jAddDays(WEEK, 14);
+      const WEEK_3 = jAddDays(WEEK, 21);
 
-    // ==========================================
-    // 21. INCREMENT 2 — WORKFORCE (UC41–UC45)
-    // ==========================================
-    await addDoc(collection(db, 'staff_availability'), {
-      staffId: 'sibusiso_khoza', staffName: 'Chef Sibusiso Khoza', weekStart: todayStr,
-      availability: [
-        { day: 'Monday', startTime: '08:00', endTime: '17:00' },
-        { day: 'Tuesday', startTime: '08:00', endTime: '17:00' },
-        { day: 'Wednesday', startTime: '08:00', endTime: '17:00' },
-        { day: 'Thursday', startTime: '08:00', endTime: '17:00' },
-        { day: 'Friday', startTime: '08:00', endTime: '17:00' },
-      ],
-      unavailableDates: [], updatedAt: new Date().toISOString(),
-    });
-    await addDoc(collection(db, 'staff_availability'), {
-      staffId: 'elena_meyer', staffName: 'Elena Meyer', weekStart: todayStr,
-      availability: [
-        { day: 'Monday', startTime: '09:00', endTime: '15:00' },
-        { day: 'Wednesday', startTime: '09:00', endTime: '15:00' },
-        { day: 'Friday', startTime: '09:00', endTime: '15:00' },
-      ],
-      unavailableDates: [], updatedAt: new Date().toISOString(),
-    });
-    await addDoc(collection(db, 'leave_requests'), {
-      staffId: 'elena_meyer', staffName: 'Elena Meyer', leaveType: 'Annual',
-      startDate: dayStr(14), endDate: dayStr(16), supportingDocuments: [],
-      status: 'approved', submittedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-      reviewedBy: 'bandile_maqeda', reviewedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    });
-    await addDoc(collection(db, 'leave_requests'), {
-      staffId: 'marco_rossi', staffName: 'Chef Marco Rossi', leaveType: 'Sick',
-      startDate: dayStr(3), endDate: dayStr(4), supportingDocuments: [],
-      status: 'pending', submittedAt: new Date().toISOString(),
-    });
-    const rosterRef = await addDoc(collection(db, 'shift_rosters'), {
-      rosterId: `RS-${todayStr}-F&B`.replace(/\s+/g, '').toUpperCase(),
-      weekStart: todayStr, department: 'Food & Beverage',
-      shifts: [
-        { shiftId: 'SH-SEED-01', staffId: 'sibusiso_khoza', staffName: 'Chef Sibusiso Khoza', date: dayStr(1), startTime: '08:00', endTime: '16:00', role: 'chef', requiredSkill: 'hot-kitchen' },
-        { shiftId: 'SH-SEED-02', staffId: 'marco_rossi', staffName: 'Chef Marco Rossi', date: dayStr(1), startTime: '16:00', endTime: '23:00', role: 'chef', requiredSkill: 'hot-kitchen' },
-        { shiftId: 'SH-SEED-03', staffId: 'elena_meyer', staffName: 'Elena Meyer', date: dayStr(2), startTime: '09:00', endTime: '15:00', role: 'front_desk', requiredSkill: 'check-in' },
-        { shiftId: 'SH-SEED-04', staffId: 'sibusiso_khoza', staffName: 'Chef Sibusiso Khoza', date: dayStr(2), startTime: '08:00', endTime: '16:00', role: 'chef', requiredSkill: 'cold-kitchen' },
-      ],
-      validationStatus: 'published', validationWarnings: [], published: true,
-      publishedAt: new Date().toISOString(), publishedBy: 'bandile_maqeda',
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    });
-    await addDoc(collection(db, 'shift_swaps'), {
-      requesterStaffId: 'sibusiso_khoza', requesterShiftId: 'SH-SEED-01',
-      targetStaffId: 'marco_rossi', targetShiftId: 'SH-SEED-02', rosterId: rosterRef.id,
-      status: 'pending_peer', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    });
-    for (const os of [
-      { shiftId: 'OS-SEED-01', department: 'Food & Beverage', date: dayStr(3), startTime: '18:00', endTime: '23:00', role: 'chef', requiredSkill: 'hot-kitchen', hours: 5, urgency: 'urgent', status: 'open' },
-      { shiftId: 'OS-SEED-02', department: 'Front Office', date: dayStr(4), startTime: '08:00', endTime: '14:00', role: 'front_desk', requiredSkill: 'check-in', hours: 6, urgency: 'normal', status: 'open' },
-    ]) {
-      await addDoc(collection(db, 'open_shifts'), { ...os, rosterId: rosterRef.id, createdAt: new Date().toISOString(), createdBy: 'bandile_maqeda' });
+      // Demo accounts from VITE_DEMO_ACCOUNTS (same JSON as the mobile
+      // EXPO_PUBLIC_DEMO_ACCOUNTS; passwords are never used by the seed).
+      let accts: Array<{ label?: unknown; email?: unknown }> = [];
+      try {
+        const raw = import.meta.env.VITE_DEMO_ACCOUNTS as string | undefined;
+        if (raw) {
+          let parsed: unknown = JSON.parse(raw);
+          if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+          if (!Array.isArray(parsed)) {
+            const bag = parsed as { accounts?: unknown; demoAccounts?: unknown };
+            parsed = bag?.accounts ?? bag?.demoAccounts ?? [];
+          }
+          if (Array.isArray(parsed)) accts = parsed as Array<{ label?: unknown; email?: unknown }>;
+        }
+      } catch { accts = []; }
+
+      type SeedActor = { uid: string; email: string; displayName: string; employeeId?: string; npoId?: string };
+      const actors: Record<string, SeedActor> = {};
+      for (const a of accts) {
+        const label = String(a?.label ?? '');
+        const email = String(a?.email ?? '').trim().toLowerCase();
+        if (!label || !email) continue;
+        try {
+          const snap = await getDoc(doc(db, 'users', email));
+          if (!snap.exists()) continue;
+          const d = snap.data();
+          if (!d.uid || !d.role) continue;
+          actors[label] = {
+            uid: String(d.uid), email, displayName: String(d.displayName ?? label),
+            ...(d.employeeId ? { employeeId: String(d.employeeId) } : {}),
+            ...(d.npoId ? { npoId: String(d.npoId) } : {}),
+          };
+        } catch { /* profile unreadable — actor skipped */ }
+      }
+
+      const required = ['Kitchen Mgr', 'NPO Rep', 'Staff A', 'Staff B'];
+      const missing = required.filter((r) => !actors[r]);
+      if (!accts.length) {
+        console.warn('⏩ Mobile dataset port skipped: VITE_DEMO_ACCOUNTS is not configured');
+      } else if (missing.length) {
+        console.warn('⏩ Mobile dataset port skipped: demo actor profiles missing — run my-mobile-app scripts/seed-demo-data.js first', missing);
+      } else {
+        const ops: Array<{ col: string; id: string; data: Record<string, unknown> }> = [];
+        const put = (col: string, id: string, data: Record<string, unknown>) => ops.push({ col, id, data });
+
+        const rep = actors['NPO Rep'];
+        const adminU = actors['Admin'];
+        const mgr = actors['Kitchen Mgr'];
+        const courier = actors['Courier'];
+        const stA = actors['Staff A'], stB = actors['Staff B'];
+        const kSt = actors['Kitchen Staff'], hSt = actors['Hotel Staff'];
+        const NPO_ID_BY_REP = 'npo-dbn-haven';
+        const facility = (id: string, name: string, address: string, capacity: number, contact: string) =>
+          ({ id, name, address, capacity, contact, active: true });
+
+        // ---- npo_partners (4, stable ids) --------------------------------
+        put('npo_partners', 'npo-dbn-haven', {
+          npoId: 'npo-dbn-haven', organisationName: 'Durban Haven Trust',
+          registrationNumber: 'NPO-145-820', pboNumber: 'PBO-930051477',
+          contactName: rep?.displayName ?? 'Thandeka Naidoo', email: rep?.email ?? 'npo.rep@azurehorizon.demo',
+          phone: '+27 31 555 0142', serviceAreas: ['eThekwini Central', 'Berea', 'Glenwood'],
+          beneficiaryCapacity: 620, transportType: 'Refrigerated van', refrigerationAvailable: true,
+          complianceDocuments: [
+            { url: 'https://firebasestorage.googleapis.com/v0/b/hotel-management-system-c3526.firebasestorage.app/o/npo-docs%2Fdbn-haven-npo-certificate.pdf', fileName: 'dbn-haven-npo-certificate.pdf', mimeType: 'application/pdf', size: 182400, uploadedAt: nowIso(), uploadedBy: rep?.uid ?? 'seed' },
+            { url: 'https://firebasestorage.googleapis.com/v0/b/hotel-management-system-c3526.firebasestorage.app/o/npo-docs%2Fdbn-haven-pbo.pdf', fileName: 'dbn-haven-pbo.pdf', mimeType: 'application/pdf', size: 96400, uploadedAt: nowIso(), uploadedBy: rep?.uid ?? 'seed' },
+          ],
+          facilities: [
+            facility('fac-haven-central', 'Durban Haven Community Kitchen', '112 Julius Nyerere St, Durban Central', 350, '+27 31 555 0143'),
+            facility('fac-haven-chatsworth', 'Chatsworth Care Centre', '45 Arena Park Dr, Chatsworth', 180, '+27 31 555 0144'),
+          ],
+          verificationStatus: 'approved', verifiedBy: adminU?.uid ?? 'seed', verifiedAt: nowIso(),
+          seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+        put('npo_partners', 'npo-phoenix-foodbank', {
+          npoId: 'npo-phoenix-foodbank', organisationName: 'Phoenix Community Foodbank',
+          registrationNumber: 'NPO-092-337', pboNumber: 'PBO-930012088',
+          contactName: 'Pravin Reddy', email: 'operations@phoenixfoodbank.co.za', phone: '+27 31 507 2210',
+          serviceAreas: ['Phoenix', 'Verulam', 'Tongaat'], beneficiaryCapacity: 940,
+          transportType: '1-ton truck', refrigerationAvailable: true,
+          complianceDocuments: [
+            { url: 'https://firebasestorage.googleapis.com/v0/b/hotel-management-system-c3526.firebasestorage.app/o/npo-docs%2Fphoenix-npo-certificate.pdf', fileName: 'phoenix-npo-certificate.pdf', mimeType: 'application/pdf', size: 154800, uploadedAt: nowIso(), uploadedBy: 'seed' },
+          ],
+          facilities: [facility('fac-phoenix-hub', 'Phoenix Foodbank Hub', '18 Parthenon St, Phoenix', 600, '+27 31 507 2211')],
+          verificationStatus: 'approved', verifiedBy: adminU?.uid ?? 'seed', verifiedAt: nowIso(),
+          seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+        put('npo_partners', 'npo-umlazi-feeding', {
+          npoId: 'npo-umlazi-feeding', organisationName: 'Umlazi Feeding Scheme',
+          registrationNumber: 'NPO-118-664',
+          contactName: 'Sinenhlanhla Ngcobo', email: 'admin@umlazifeeds.org.za', phone: '+27 31 906 7781',
+          serviceAreas: ['Umlazi', 'KwaMashu', 'Inanda'], beneficiaryCapacity: 480,
+          transportType: 'Bakkie', refrigerationAvailable: false,
+          complianceDocuments: [
+            { url: 'https://firebasestorage.googleapis.com/v0/b/hotel-management-system-c3526.firebasestorage.app/o/npo-docs%2Fumlazi-npo-certificate.pdf', fileName: 'umlazi-npo-certificate.pdf', mimeType: 'application/pdf', size: 132200, uploadedAt: nowIso(), uploadedBy: 'seed' },
+          ],
+          facilities: [facility('fac-umlazi-hall', 'Umlazi Community Hall', 'Sibusiso Mdakane Rd, Umlazi', 300, '+27 31 906 7782')],
+          verificationStatus: 'approved', verifiedBy: adminU?.uid ?? 'seed', verifiedAt: nowIso(),
+          seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+        put('npo_partners', 'npo-pinetown-outreach', {
+          npoId: 'npo-pinetown-outreach', organisationName: 'Pinetown Outreach Network',
+          registrationNumber: 'NPO-201-905',
+          contactName: 'Megan Pillay', email: 'hello@pinetownoutreach.org.za', phone: '+27 31 701 3344',
+          serviceAreas: ['Pinetown', 'Westville', 'New Germany'], beneficiaryCapacity: 260,
+          transportType: 'Own vehicle', refrigerationAvailable: false,
+          complianceDocuments: [], facilities: [],
+          verificationStatus: 'under_review', seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+
+        // ---- staff_availability ------------------------------------------
+        const monFri = (s: string, e: string) =>
+          ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day) => ({ day, startTime: s, endTime: e }));
+        const putAvail = (staff: SeedActor | undefined, weekStart: string, slots: Array<{ day: string; startTime: string; endTime: string }>, unavailable: string[] = []) => {
+          if (!staff) return;
+          put('staff_availability', `avail-${staff.employeeId}-${weekStart}`, {
+            staffId: staff.uid, staffName: staff.displayName, weekStart,
+            availability: slots, unavailableDates: unavailable, seedSet: 'azure-demo-v2', updatedAt: nowIso(),
+          });
+        };
+        if (stA) { putAvail(stA, WEEK, monFri('07:00', '18:00')); putAvail(stA, NEXT_WEEK, monFri('07:00', '18:00')); }
+        if (stB) {
+          const tueThu = [
+            { day: 'Tuesday', startTime: '07:00', endTime: '18:00' },
+            { day: 'Thursday', startTime: '07:00', endTime: '18:00' },
+          ];
+          putAvail(stB, WEEK, tueThu); putAvail(stB, NEXT_WEEK, tueThu);
+        }
+        if (kSt) { putAvail(kSt, WEEK, monFri('08:00', '20:00')); putAvail(kSt, NEXT_WEEK, monFri('08:00', '20:00')); }
+
+        // ---- leave_requests ------------------------------------------------
+        const putLeave = (id: string, staff: SeedActor | undefined, leaveType: string, startDate: string, endDate: string, status: string, extra: Record<string, unknown> = {}) => {
+          if (!staff) return;
+          put('leave_requests', id, {
+            staffId: staff.uid, staffName: staff.displayName, leaveType, startDate, endDate,
+            supportingDocuments: [], status, submittedAt: nowIso(), seedSet: 'azure-demo-v2', ...extra,
+          });
+        };
+        putLeave('leave-1001', stA, 'Annual leave', jAddDays(WEEK_AFTER, 0), jAddDays(WEEK_AFTER, 1), 'approved',
+          mgr ? { reviewedBy: mgr.uid, reviewedAt: nowIso() } : {});
+        putLeave('leave-1002', stB, 'Family responsibility', jAddDays(WEEK_AFTER, 3), jAddDays(WEEK_AFTER, 4), 'pending');
+        putLeave('leave-1003', kSt, 'Annual leave', jAddDays(NEXT_WEEK, 2), jAddDays(NEXT_WEEK, 2), 'pending');
+        putLeave('leave-1004', hSt, 'Sick leave', jAddDays(NEXT_WEEK, 0), jAddDays(NEXT_WEEK, 1), 'rejected',
+          mgr ? { reviewedBy: mgr.uid, reviewedAt: nowIso(), rejectionReason: 'Coverage already committed for those dates.' } : {});
+        putLeave('leave-1005', courier, 'Annual leave', jAddDays(WEEK_3, 0), jAddDays(WEEK_3, 4), 'approved',
+          adminU ? { reviewedBy: adminU.uid, reviewedAt: nowIso() } : {});
+
+        // ---- shift_rosters -------------------------------------------------
+        const mkShift = (shiftId: string, staff: SeedActor, date: string, startTime: string, endTime: string, role: string, requiredSkill: string) =>
+          ({ shiftId, staffId: staff.uid, staffName: staff.displayName, date, startTime, endTime, role, requiredSkill });
+        const putRoster = (id: string, weekStart: string, department: string, shifts: unknown[], published: boolean) => {
+          put('shift_rosters', id, {
+            rosterId: `RS-${weekStart}-${department}`.replace(/\s+/g, '').toUpperCase(),
+            weekStart, department, shifts,
+            validationStatus: published ? 'published' : 'validated',
+            validationWarnings: [], published,
+            publishedAt: published ? nowIso() : undefined,
+            publishedBy: published ? mgr?.uid : undefined,
+            seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+          });
+        };
+        const dW = (n: number) => jAddDays(WEEK, n);
+        if (stA || hSt) {
+          const shifts: unknown[] = [];
+          if (stA) [0, 1, 2, 3, 4].forEach((n) => shifts.push(mkShift(`sh-fo-${n}`, stA, dW(n), '08:00', '16:00', 'Front Desk Officer', 'check-in')));
+          if (hSt) {
+            shifts.push(mkShift('sh-hk-0', hSt, dW(0), '12:00', '20:00', 'Housekeeping Supervisor', 'supervision'));
+            shifts.push(mkShift('sh-hk-2', hSt, dW(2), '12:00', '20:00', 'Housekeeping Supervisor', 'supervision'));
+            shifts.push(mkShift('sh-hk-4', hSt, dW(4), '12:00', '20:00', 'Housekeeping Supervisor', 'supervision'));
+          }
+          putRoster('roster-front-office', WEEK, 'Front Office', shifts, true);
+        }
+        if (stB) putRoster('roster-facilities', WEEK, 'Facilities', [
+          mkShift('sh-fac-1', stB, dW(1), '09:00', '17:00', 'Maintenance Technician', 'repair'),
+          mkShift('sh-fac-3', stB, dW(3), '09:00', '17:00', 'Maintenance Technician', 'repair'),
+        ], true);
+
+        // #11 — the part-time technician is rostered exactly to their 24h
+        // contracted ceiling; a 4th shift must be flagged, not silently allowed.
+        if (stB) putRoster('roster-facilities-today', TODAY, 'Facilities', [
+          mkShift('sh-fac-today', stB, TODAY, '08:00', '16:00', 'Maintenance Technician', 'repair'),
+        ], true);
+        // #19 — shifts TODAY so clock-in is demonstrably available on mobile.
+        if (stA) putRoster('roster-front-office-today', TODAY, 'Front Office', [
+          mkShift('sh-fo-today', stA, TODAY, '08:00', '16:00', 'Front Desk Officer', 'check-in'),
+        ], true);
+        if (kSt) putRoster('roster-fnb-today', TODAY, 'Food & Beverage', [
+          mkShift('sh-fnb-today', kSt, TODAY, '10:00', '18:00', 'Commis Chef', 'food_prep'),
+        ], true);
+        // #11 — casual housekeeper next week at 20h, matching contract.
+        if (hSt) putRoster('roster-housekeeping-next', NEXT_WEEK, 'Housekeeping', [
+          mkShift('sh-hk-n0', hSt, jAddDays(NEXT_WEEK, 1), '12:00', '20:00', 'Housekeeping Attendant', 'housekeeping'),
+          mkShift('sh-hk-n2', hSt, jAddDays(NEXT_WEEK, 3), '12:00', '20:00', 'Housekeeping Attendant', 'housekeeping'),
+        ], false);
+        if (kSt) putRoster('roster-fnb', WEEK, 'Food & Beverage',
+          [0, 1, 2, 3, 4].map((n) => mkShift(`sh-fnb-${n}`, kSt, dW(n), '10:00', '18:00', 'Commis Chef', 'food_prep')), true);
+        if (stA) putRoster('roster-front-office-next', NEXT_WEEK, 'Front Office',
+          [0, 1, 2, 3].map((n) => mkShift(`sh-fo-n-${n}`, stA, jAddDays(NEXT_WEEK, n), '08:00', '16:00', 'Front Desk Officer', 'check-in')), false);
+
+        // ---- open_shifts ---------------------------------------------------
+        // requestedCount/assignees drive the requested-vs-filled board. Every
+        // seeded date is future-relative to TODAY so nothing is born elapsed.
+        const putOs = (id: string, department: string, date: string, startTime: string, endTime: string, role: string, requiredSkill: string, urgency: string, status: string, extra: Record<string, unknown> = {}) => {
+          const [sh, sm] = startTime.split(':').map(Number);
+          const [eh, em] = endTime.split(':').map(Number);
+          const requestedCount = Math.max(1, Number(extra.requestedCount) || 1);
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars -- drop the raw input after normalising it
+          const { requestedCount: _ignored, ...rest } = extra;
+          put('open_shifts', id, {
+            shiftId: `OS-${id.toUpperCase()}`, rosterId: null, department, date, startTime, endTime, role,
+            requiredSkill, hours: Math.round((((eh * 60 + em) - (sh * 60 + sm)) / 60) * 10) / 10,
+            urgency, status, requestedCount, assignees: [], seedSet: 'azure-demo-v2', createdAt: nowIso(),
+            createdBy: mgr?.uid ?? 'seed', ...rest,
+          });
+        };
+        putOs('os-2001', 'Front Office', jAddDays(TODAY, 1), '14:00', '22:00', 'Front Desk Officer', 'check-in', 'urgent', 'open', { requestedCount: 2 });
+        putOs('os-2002', 'Food & Beverage', jAddDays(TODAY, 2), '10:00', '18:00', 'Commis Chef', 'food_prep', 'normal', 'open', { requestedCount: 3 });
+        putOs('os-2003', 'Facilities', jAddDays(TODAY, 1), '07:00', '15:00', 'Maintenance Technician', 'repair', 'critical', 'open', { requestedCount: 2 });
+        putOs('os-2004', 'Housekeeping', jAddDays(TODAY, 2), '08:00', '16:00', 'Housekeeping Supervisor', 'supervision', 'normal', 'open');
+        putOs('os-2005', 'Front Office', jAddDays(TODAY, 1), '06:00', '14:00', 'Front Desk Officer', 'check-in', 'normal', 'open');
+        putOs('os-2006', 'Food & Beverage', jAddDays(TODAY, 2), '12:00', '20:00', 'Commis Chef', 'food_safety', 'urgent', 'filled',
+          stB ? { claimedBy: stB.uid, claimedAt: nowIso(), assignees: [stB.uid] } : {});
+        putOs('os-2007', 'Front Office', jAddDays(TODAY, 3), '16:00', '22:00', 'Front Desk Officer', 'check-in', 'critical', 'open', { requestedCount: 3 });
+
+        // ---- shift_swaps ---------------------------------------------------
+        if (stA && hSt) put('shift_swaps', 'swap-3001', {
+          requesterStaffId: stA.uid, requesterShiftId: 'sh-fo-2', targetStaffId: hSt.uid, targetShiftId: 'sh-hk-2',
+          rosterId: 'roster-front-office', status: 'pending_peer', seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+        if (hSt && stA) put('shift_swaps', 'swap-3002', {
+          requesterStaffId: hSt.uid, requesterShiftId: 'sh-hk-0', targetStaffId: stA.uid, targetShiftId: 'sh-fo-0',
+          rosterId: 'roster-front-office', status: 'pending_manager', seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(),
+        });
+
+        // ---- donation_batches + donation_checkins --------------------------
+        // Collection passes are signed byte-identically to the mobile script:
+        // sha256hex(VITE_QR_SIGNING_SECRET + JSON.stringify(payload)).
+        const qrSecret = (import.meta.env.VITE_QR_SIGNING_SECRET as string | undefined) || '';
+        const signPass = async (payload: Record<string, unknown>) =>
+          qrSecret ? await sha256Hex(qrSecret + JSON.stringify(payload)) : 'unsigned-seed-pass';
+        const checklist = () => ({
+          coreTemperatureVerified: true, packagingIntegrityVerified: true,
+          allergenLabelsVerified: true, safePreparationWindowVerified: true,
+        });
+        const photo = (name: string) => ({
+          url: `https://firebasestorage.googleapis.com/v0/b/hotel-management-system-c3526.firebasestorage.app/o/donation-safety%2F${name}.jpg`,
+          fileName: `${name}.jpg`, mimeType: 'image/jpeg', size: 245000,
+          uploadedAt: nowIso(), uploadedBy: mgr?.uid ?? 'seed',
+        });
+        const B = (id: string, batchId: string, itemName: string, mealCategory: string, portions: number, kg: number, allergens: string[], prepared: string, expiry: string, status: string, extra: Record<string, unknown> = {}) =>
+          put('donation_batches', id, {
+            batchId, itemName, mealCategory, portionCount: portions, estimatedWeightKg: kg, allergens,
+            preparedAt: prepared, expiryAt: expiry, safetyChecklist: checklist(), safetyPhotoUrl: photo(batchId.toLowerCase()).url,
+            photoMeta: photo(batchId.toLowerCase()), status, qrConsumed: false,
+            createdBy: mgr?.uid ?? 'seed', seedSet: 'azure-demo-v2', createdAt: nowIso(), updatedAt: nowIso(), ...extra,
+          });
+
+        // 1 — awaiting allocation (logged today, expires tomorrow)
+        B('batch-don-001', 'DON-2026-001', 'Chicken a la King', 'Cooked mains', 120, 42.5, ['milk', 'gluten'],
+          jAt(TODAY, '09:15'), jAt(jAddDays(TODAY, 1), '09:15'), 'safety_verified_unassigned');
+        // 2 — allocated, awaiting NPO claim
+        B('batch-don-002', 'DON-2026-002', 'Vegetable Lasagne', 'Cooked mains', 90, 34.0, ['milk', 'gluten'],
+          jAt(TODAY, '08:40'), jAt(jAddDays(TODAY, 1), '08:40'), 'allocated_awaiting_claim',
+          { allocatedNpoId: NPO_ID_BY_REP, allocatedAt: nowIso(), allocatedBy: mgr?.uid ?? 'seed' });
+        B('batch-don-003', 'DON-2026-003', 'Beef Stew & Rice', 'Cooked mains', 150, 58.2, [],
+          jAt(TODAY, '07:55'), jAt(jAddDays(TODAY, 1), '07:55'), 'allocated_awaiting_claim',
+          { allocatedNpoId: 'npo-phoenix-foodbank', allocatedAt: nowIso(), allocatedBy: mgr?.uid ?? 'seed' });
+        // 3 — claimed, ready to schedule
+        B('batch-don-004', 'DON-2026-004', 'Sandwich Platters', 'Ready to eat', 200, 26.0, ['gluten', 'egg'],
+          jAt(TODAY, '06:30'), jAt(TODAY, '18:30'), 'claimed_ready_for_scheduling',
+          {
+            allocatedNpoId: NPO_ID_BY_REP, allocatedAt: nowIso(), allocatedBy: mgr?.uid ?? 'seed',
+            claimedBy: rep?.uid ?? 'seed', claimedAt: nowIso(),
+            receivingFacility: 'Durban Haven Community Kitchen', distributionTermsAccepted: true,
+          });
+        // 4 — collection scheduled (future window) with a valid signed pass
+        {
+          const pickupDate = jAddDays(TODAY, 2);
+          const windowStart = jAt(pickupDate, '09:00');
+          const windowEnd = jAt(pickupDate, '11:00');
+          const nonce = 'seednonce0005';
+          const payload = {
+            type: 'DONATION_COLLECTION', batchId: 'DON-2026-005', batchDocId: 'batch-don-005', npoId: NPO_ID_BY_REP,
+            collectionWindowStart: windowStart, collectionWindowEnd: windowEnd, loadingBay: 'Loading Bay B', issuedAt: Date.now(), nonce,
+          };
+          const sig = await signPass(payload);
+          B('batch-don-005', 'DON-2026-005', 'Fruit & Yoghurt Cups', 'Cold desserts', 180, 22.4, ['milk'],
+            jAt(TODAY, '07:10'), jAt(jAddDays(TODAY, 2), '07:10'), 'collection_scheduled', {
+              allocatedNpoId: NPO_ID_BY_REP, allocatedAt: nowIso(), allocatedBy: mgr?.uid ?? 'seed',
+              claimedBy: rep?.uid ?? 'seed', claimedAt: nowIso(), receivingFacility: 'Durban Haven Community Kitchen',
+              distributionTermsAccepted: true, pickupDate, pickupWindowStart: windowStart, pickupWindowEnd: windowEnd,
+              loadingBay: 'Loading Bay B', courierName: courier?.displayName ?? 'Bongani Cele',
+              collectionQr: JSON.stringify({ ...payload, sig }), collectionNonce: nonce,
+            });
+        }
+        // 5–7 — collected (historical) with matching checkins
+        const collected: Array<[string, string, string, string, number, number, string[], number, string, string]> = [
+          ['batch-don-006', 'DON-2026-006', 'Roast Chicken Portions', 'Cooked mains', 110, 38.0, [], -3, NPO_ID_BY_REP, 'Durban Haven Community Kitchen'],
+          ['batch-don-007', 'DON-2026-007', 'Curry & Rice', 'Cooked mains', 140, 46.5, [], -6, 'npo-phoenix-foodbank', 'Phoenix Foodbank Hub'],
+          ['batch-don-008', 'DON-2026-008', 'Assorted Pastries', 'Bakery', 260, 31.2, ['gluten', 'egg'], -9, 'npo-umlazi-feeding', 'Umlazi Community Hall'],
+        ];
+        for (const [id, batchId, item, cat, portions, kg, allergens, offset, npoId, facilityName] of collected) {
+          const prepDate = jAddDays(TODAY, offset);
+          const pickDate = jAddDays(TODAY, offset + 1);
+          const winStart = jAt(pickDate, '09:00');
+          const winEnd = jAt(pickDate, '11:00');
+          const nonce = `seednonce${batchId.slice(-3)}`;
+          const payload = {
+            type: 'DONATION_COLLECTION', batchId, batchDocId: id, npoId,
+            collectionWindowStart: winStart, collectionWindowEnd: winEnd, loadingBay: 'Loading Bay A', issuedAt: Date.now(), nonce,
+          };
+          const sig = await signPass(payload);
+          B(id, batchId, item, cat, portions, kg, allergens, jAt(prepDate, '08:00'), jAt(jAddDays(prepDate, 1), '08:00'), 'collected_completed', {
+            allocatedNpoId: npoId, allocatedAt: jAt(prepDate, '08:30'), allocatedBy: mgr?.uid ?? 'seed',
+            claimedBy: npoId === NPO_ID_BY_REP && rep ? rep.uid : 'seed', claimedAt: jAt(prepDate, '09:00'),
+            receivingFacility: facilityName, distributionTermsAccepted: true,
+            pickupDate: pickDate, pickupWindowStart: winStart, pickupWindowEnd: winEnd, loadingBay: 'Loading Bay A',
+            courierName: courier?.displayName ?? 'Bongani Cele',
+            collectionQr: JSON.stringify({ ...payload, sig }), collectionNonce: nonce, qrConsumed: true,
+            collectedAt: jAt(pickDate, '10:12'), verifiedBy: courier?.uid ?? 'seed',
+          });
+          put('donation_checkins', `${id}_${nonce}`, {
+            batchId, npoId, courierName: courier?.displayName ?? 'Bongani Cele',
+            courierId: courier?.uid, method: 'donation_scan',
+            collectionWindow: `${winStart} → ${winEnd}`, loadingBay: 'Loading Bay A',
+            sealVerified: true, signature: courier?.displayName ?? 'Bongani Cele',
+            collectedAt: jAt(pickDate, '10:12'), verifiedBy: courier?.uid ?? 'seed',
+            wasOffline: false, idempotencyKey: `${id}:${nonce}`, seedSet: 'azure-demo-v2',
+          });
+        }
+        // 8 — cancelled
+        B('batch-don-009', 'DON-2026-009', 'Fish Curry', 'Cooked mains', 70, 27.8, ['fish'],
+          jAt(jAddDays(TODAY, -1), '12:00'), jAt(TODAY, '12:00'), 'cancelled', {
+            lastDecision: { performedBy: mgr?.uid ?? 'seed', performedAt: nowIso(), action: 'donation_cancelled', reason: 'Cold-chain break detected on inspection.' },
+          });
+
+        // ---- attendance_exceptions -----------------------------------------
+        const putExc = (id: string, staff: SeedActor | undefined, date: string, startTime: string, endTime: string, exceptionType: string, reviewStatus: string, rosterId: string, shiftId: string, extra: Record<string, unknown> = {}) => {
+          if (!staff) return;
+          put('attendance_exceptions', id, {
+            staffId: staff.uid, staffName: staff.displayName, shiftId, rosterId,
+            clockInAt: jAt(date, startTime), clockOutAt: jAt(date, endTime), hoursWorked: 7.5, scheduledHours: 8,
+            exceptionType, reviewStatus, seedSet: 'azure-demo-v2', createdAt: nowIso(), ...extra,
+          });
+        };
+        putExc('exc-4001', stA, jAddDays(WEEK, 2), '08:22', '16:00', 'late_arrival', 'exception_review', 'roster-front-office', 'sh-fo-2');
+        putExc('exc-4002', stB, jAddDays(WEEK, 1), '09:12', '15:30', 'early_departure', 'exception_review', 'roster-facilities', 'sh-fac-1');
+        putExc('exc-4003', hSt, jAddDays(WEEK, 0), '12:00', '20:00', 'outside_geofence', 'verified', 'roster-front-office', 'sh-hk-0',
+          mgr ? {
+            adjustedBy: mgr.uid, adjustedAt: nowIso(), adjustmentReason: 'GPS drift confirmed — punch accepted on site.',
+            originalValue: JSON.stringify({ reviewStatus: 'exception_review' }), newValue: JSON.stringify({ reviewStatus: 'verified' }),
+          } : {});
+
+        // ---- commit: upsert-only, no deletes -------------------------------
+        for (const op of ops) {
+          await setDoc(doc(db, op.col, op.id), stripUndefined(op.data) as Parameters<typeof setDoc>[1], { merge: true });
+        }
+        console.log(`✅ Ported mobile azure-demo-v2 dataset: ${ops.length} docs (stable ids, upsert-only, no deletes)`);
+      }
     }
-    await addDoc(collection(db, 'punch_records'), {
-      punchType: 'in', staffUid: 'sibusiso_khoza', staffRosterId: 'SH-SEED-01', staffName: 'Chef Sibusiso Khoza',
-      deviceId: 'seed-device', deviceMatchPassed: true, isFirstTimeEnrollment: false,
-      biometricPassed: true, biometricMethod: 'fingerprint', lat: -29.8606, lng: 30.9803,
-      accuracyM: 12, distanceM: 8, withinRadius: true, overallStatus: 'clocked-in',
-      source: 'staff_mobile', isoTime: new Date(Date.now() - 2 * 3600000).toISOString(),
-    });
-    await addDoc(collection(db, 'attendance_exceptions'), {
-      staffId: 'marco_rossi', staffName: 'Chef Marco Rossi', shiftId: 'SH-SEED-02', rosterId: rosterRef.id,
-      clockInAt: new Date(Date.now() - 1 * 86400000 + 9 * 3600000).toISOString(),
-      clockOutAt: new Date(Date.now() - 1 * 86400000 + 17 * 3600000).toISOString(),
-      hoursWorked: 8, exceptionType: 'late_arrival', reviewStatus: 'exception_review',
-      createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    });
-    console.log(`✅ Added workforce seed: availability, leave, roster, swap, open shifts, punches, exception`);
+
+    // (section 20 donation batches replaced by the mobile port above)
+
+    // (section 21 workforce seed replaced by the mobile port above — punch_records
+    //  are intentionally NOT seeded: the old docs referenced fake staff ids)
 
     await setDoc(doc(db, 'meta', 'seedMarker'), {
       lastSeedDate: todayStr,
@@ -1188,6 +1387,19 @@ export const seedDatabase = async (opts: { silent?: boolean } = {}) => {
 // Auto-run on web landing page: only re-seeds when the
 // seed marker is stale (i.e. a different day), keeping the
 // demo data permanently in sync with "today". Silent by default.
+//
+// NOT currently wired to any page — deliberate. Live Firestore rules
+// (probed 2026-10-04) deny most re-seed writes for every role:
+//  - signed out: everything is denied (previous landing-page trigger
+//    always failed; the event-domain wipes ran only if an admin session
+//    overlapped, and then the recreates were denied → data loss);
+//  - admin: spa/tour/leave/donation/npo/swap/exception updates and any
+//    edit to open-status open_shifts are all denied (even no-ops), so a
+//    run aborts midway. Event invitations/feedback must not be wiped
+//    either (wipes succeed as admin, recreates do not).
+// Demo freshness is owned by my-mobile-app scripts/seed-demo-data.js
+// (client SDK + rules-compatible). Re-enable this only alongside a
+// rules change that permits each write the seed performs.
 export const autoSeedIfNeeded = async (opts: { silent?: boolean } = {}) => {
   try {
     const marker = await getDoc(doc(db, 'meta', 'seedMarker'));

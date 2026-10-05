@@ -38,14 +38,40 @@ import {
   MessageSquareHeart,
   Compass,
   Flower2,
-  CalendarCheck2
+  CalendarCheck2,
+  Building2
 } from 'lucide-react';
 
 interface LandingPageProps {
   onRegisterClick: () => void;
+  onNpoApplyClick: () => void;
 }
 
-export function LandingPage({ onRegisterClick }: LandingPageProps) {
+// One-tap demo logins — same JSON as the mobile EXPO_PUBLIC_DEMO_ACCOUNTS,
+// provided as VITE_DEMO_ACCOUNTS in the gitignored .env. Absent → hidden.
+type DemoAccount = { label: string; email: string; password: string };
+const DEMO_ACCOUNTS: DemoAccount[] = (() => {
+  try {
+    const raw = import.meta.env.VITE_DEMO_ACCOUNTS as string | undefined;
+    if (!raw) return [];
+    let parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+    if (!Array.isArray(parsed)) {
+      const bag = parsed as { accounts?: unknown; demoAccounts?: unknown };
+      parsed = bag?.accounts ?? bag?.demoAccounts ?? [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as Array<Record<string, unknown>>)
+      .map((a) => ({
+        label: String(a?.label || ''),
+        email: String(a?.email || ''),
+        password: String(a?.password || ''),
+      }))
+      .filter((a) => a.email && a.password);
+  } catch { return []; }
+})();
+
+export function LandingPage({ onRegisterClick, onNpoApplyClick }: LandingPageProps) {
   const { login, user, isAuthenticated } = useAuth(); 
   const navigate = useNavigate();
   const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false';
@@ -64,6 +90,7 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
+  const [quickLogging, setQuickLogging] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -129,21 +156,11 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
     }
   };
 
-  // Auto-refresh demo data whenever it is stale (e.g. a new day).
-  // Replaces the need to manually click "Seed Database" — keeps
-  // events/inspections/invitations permanently in sync with "today".
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { autoSeedIfNeeded } = await import('@/services/seedData');
-        if (!cancelled) await autoSeedIfNeeded({ silent: true });
-      } catch (err) {
-        console.error('Auto-seed failed:', err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  // Auto-seed on landing is intentionally NOT run here: it fires signed-out,
+  // where every write is denied by Firestore rules (it always failed), and if
+  // an admin session overlaps it the event-domain wipes run while the mobile
+  // collections' recreates are denied — destructive. Demo data refresh is
+  // handled by the mobile seeder; see the notes in seedData.ts.
 
   const handleGuestLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -297,6 +314,28 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
     }
   };
 
+  const handleQuickLogin = async (account: DemoAccount) => {
+    setErrorMessage(null);
+    setQuickLogging(account.label);
+    try {
+      const result = await loginUser(account.email, account.password);
+      if (!result.user) {
+        setErrorMessage(`❌ ${result.error || 'Quick login failed.'}`);
+        return;
+      }
+      const profile = result.user as unknown as CustomUser & { displayName?: string };
+      login({
+        ...result.user,
+        name: profile.name || profile.displayName || account.label,
+      } as unknown as CustomUser);
+    } catch (err: unknown) {
+      console.error('Quick login error:', err);
+      setErrorMessage('❌ Quick login failed. Please try again.');
+    } finally {
+      setQuickLogging(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#1e3a5f] via-[#2c5282] to-[#4a7c9b] font-sans">
       <div className="relative overflow-hidden">
@@ -374,6 +413,9 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
                       <Button variant="outline" className="w-full border-[#1e3a5f] text-[#1e3a5f] hover:bg-slate-50 dark:border-blue-400 dark:text-blue-400 dark:hover:bg-slate-800" onClick={onRegisterClick}>
                         <UserPlus className="h-4 w-4 mr-2" /> Create Member Account
                       </Button>
+                      <Button variant="outline" className="w-full mt-2 border-[#c9a227] text-[#a5811a] hover:bg-yellow-50 dark:border-yellow-500 dark:text-yellow-400 dark:hover:bg-slate-800" onClick={onNpoApplyClick}>
+                        <Building2 className="h-4 w-4 mr-2" /> Apply as an NPO Partner
+                      </Button>
                     </div>
                   </TabsContent>
 
@@ -429,6 +471,28 @@ export function LandingPage({ onRegisterClick }: LandingPageProps) {
                   </Button>
                   )}
                 </div>
+
+                {DEMO_ACCOUNTS.length > 0 && (
+                  <div className="mt-4 pt-4 border-t dark:border-slate-800 text-center">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">One-tap demo logins</p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {DEMO_ACCOUNTS.map((a) => (
+                        <Button
+                          key={a.label}
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-3 text-xs dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          disabled={quickLogging !== null}
+                          onClick={() => handleQuickLogin(a)}
+                        >
+                          {quickLogging === a.label ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Key className="h-3 w-3 mr-1" />}
+                          {a.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

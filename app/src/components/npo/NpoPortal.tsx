@@ -8,14 +8,16 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertModal } from '@/components/ui/AlertModal';
 import { Loader2, PackageCheck } from 'lucide-react';
-import { listenDonationBatches, claimDonationBatch } from '@/services/increment2-services';
+import { listenDonationBatches, listenDonationCheckins, claimDonationBatch } from '@/services/increment2-services';
+import { TrustScorePanel } from '@/components/npo/TrustScorePanel';
 import { formatStatus } from '@/utils/statusLabels';
-import type { DonationBatch } from '@/types/increment2';
+import type { DonationBatch, DonationCheckin } from '@/types/increment2';
 import { useAuth } from '@/hooks/useAuth';
 
 export function NpoPortal({ npoId }: { npoId: string }) {
   const { user } = useAuth();
   const [items, setItems] = useState<DonationBatch[]>([]);
+  const [checkins, setCheckins] = useState<DonationCheckin[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DonationBatch | null>(null);
   const [facility, setFacility] = useState('');
@@ -28,7 +30,8 @@ export function NpoPortal({ npoId }: { npoId: string }) {
       setItems(list.filter((b) => b.allocatedNpoId === npoId));
       setLoading(false);
     });
-    return () => unsub();
+    const unsubCheckins = listenDonationCheckins(setCheckins);
+    return () => { unsub(); unsubCheckins(); };
   }, [npoId]);
 
   const claim = async () => {
@@ -56,6 +59,7 @@ export function NpoPortal({ npoId }: { npoId: string }) {
   return (
     <div className="space-y-6">
       {alert.open && <AlertModal open={alert.open} onClose={() => setAlert((p) => ({ ...p, open: false }))} title={alert.title} message={alert.message} type={alert.type} />}
+      <TrustScorePanel npoId={npoId} batches={items} checkins={checkins} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><PackageCheck className="h-5 w-5" /> My Allocations — awaiting claim ({awaiting.length})</CardTitle></CardHeader>
         <CardContent className="space-y-2">

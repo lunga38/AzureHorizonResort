@@ -12,6 +12,8 @@ const LABELS: Record<string, string> = {
   safety_verified_unassigned: 'Verified · Unassigned',
   allocated_awaiting_claim: 'Awaiting claim',
   claimed_ready_for_scheduling: 'Ready to schedule',
+  // #8: slot requested by the NPO, waiting for a courier to accept.
+  collection_requested: 'Awaiting courier',
   collection_scheduled: 'Collection scheduled',
   collected_completed: 'Collected',
   cancelled: 'Cancelled',

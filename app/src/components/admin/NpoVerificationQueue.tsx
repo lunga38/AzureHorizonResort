@@ -6,10 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertModal } from '@/components/ui/AlertModal';
-import { Loader2, Building2, CheckCircle2, XCircle, FileText } from 'lucide-react';
-import { listenNpoPartners, reviewNpoApplication } from '@/services/increment2-services';
+import { AttachmentList } from '@/components/ui/AttachmentViewer';
+import { Loader2, Building2, CheckCircle2, XCircle } from 'lucide-react';
+import { listenNpoPartners, reviewNpoApplication, listenDonationBatches, listenDonationCheckins } from '@/services/increment2-services';
+import { TrustScorePanel } from '@/components/npo/TrustScorePanel';
 import { formatStatus } from '@/utils/statusLabels';
-import type { NpoPartner } from '@/types/increment2';
+import type { NpoPartner, DonationBatch, DonationCheckin } from '@/types/increment2';
 import { useAuth } from '@/hooks/useAuth';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -22,6 +24,8 @@ const STATUS_COLOR: Record<string, string> = {
 export function NpoVerificationQueue() {
   const { user } = useAuth();
   const [items, setItems] = useState<NpoPartner[]>([]);
+  const [batches, setBatches] = useState<DonationBatch[]>([]);
+  const [checkins, setCheckins] = useState<DonationCheckin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<NpoPartner | null>(null);
@@ -35,7 +39,9 @@ export function NpoVerificationQueue() {
       setItems(list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       setLoading(false);
     });
-    return () => unsub();
+    const unsubBatches = listenDonationBatches(setBatches);
+    const unsubCheckins = listenDonationCheckins(setCheckins);
+    return () => { unsub(); unsubBatches(); unsubCheckins(); };
   }, []);
 
   const decide = async (approve: boolean) => {
@@ -135,14 +141,14 @@ export function NpoVerificationQueue() {
               </div>
               <div>
                 <span className="text-slate-500">Compliance documents ({selected.complianceDocuments.length}):</span>
-                {selected.complianceDocuments.length === 0 ? <p className="text-amber-600">No documents uploaded.</p> : (
-                  <ul className="mt-1 space-y-1">
-                    {selected.complianceDocuments.map((d, i) => (
-                      <li key={i}><a className="text-blue-600 underline flex items-center gap-1" href={d.url} target="_blank" rel="noreferrer"><FileText className="h-3 w-3" />{d.fileName}</a></li>
-                    ))}
-                  </ul>
-                )}
+                <AttachmentList documents={selected.complianceDocuments} emptyMessage="No documents uploaded." />
               </div>
+              <TrustScorePanel
+                npoId={selected.npoId}
+                organisationName={selected.organisationName}
+                batches={batches}
+                checkins={checkins}
+              />
               <div>
                 <label className="text-slate-500 text-xs">Decision reason (required for rejection)</label>
                 <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Registration document expired…" />

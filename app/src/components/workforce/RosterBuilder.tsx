@@ -13,11 +13,12 @@ import {
 } from '@/services/increment2-services';
 import type { RosterShift, ShiftRoster, StaffAvailability, LeaveRequest } from '@/types/increment2';
 import { formatStatus } from '@/utils/statusLabels';
+import { currentWeekStart } from '@/utils/dates';
 import { useAuth } from '@/hooks/useAuth';
 
 export function RosterBuilder() {
   const { user } = useAuth();
-  const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [weekStart, setWeekStart] = useState(() => currentWeekStart());
   const [department, setDepartment] = useState('Food & Beverage');
   const [shifts, setShifts] = useState<RosterShift[]>([]);
   const [draft, setDraft] = useState({ staffId: '', date: '', start: '08:00', end: '17:00', role: '', skill: '' });

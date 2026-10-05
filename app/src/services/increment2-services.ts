@@ -18,7 +18,7 @@ import type {
   ShiftSwap, SwapStatus, OpenShift, AttendanceException, AttendanceExceptionType,
   FileMeta, ImpactReport,
 } from '@/types/increment2';
-import { IMPACT_MEALS_PER_KG, IMPACT_CARBON_KG_PER_KG } from '@/types/increment2';
+import { IMPACT_MEALS_PER_KG, IMPACT_CARBON_KG_PER_KG, isOpenShiftElapsed, openShiftFill } from '@/types/increment2';
 
 // QR signing is centralized in ./qr-signing (env secret → service → payloads).
 // This module never hard-codes a QR secret.
@@ -1147,7 +1147,7 @@ export function listenShiftSwaps(cb: (items: ShiftSwap[]) => void, status?: Swap
 export async function createOpenShift(input: {
   department: string; date: string; startTime: string; endTime: string; role: string;
   requiredSkill?: string; premiumRate?: number; urgency?: 'normal' | 'urgent' | 'critical';
-  rosterId?: string; authorUid?: string;
+  requestedCount?: number; rosterId?: string; authorUid?: string;
 }): Promise<string> {
   const user = requireAuth();
   await requireManager('publish open shifts');
@@ -1155,6 +1155,11 @@ export async function createOpenShift(input: {
     throw new Error('Department, date and role are required.');
   const hrs = (toMin(input.endTime) - toMin(input.startTime)) / 60;
   if (!(hrs > 0)) throw new Error('Shift end must be after start.');
+  // Past dates are never publishable: an elapsed shift can only be closed.
+  if (isOpenShiftElapsed({ date: input.date, endTime: input.endTime }))
+    throw new Error('That shift has already elapsed — publish a future date.');
+  const requested = Math.max(1, Math.round(Number(input.requestedCount) || 1));
+  if (requested > 20) throw new Error('A single open shift cannot request more than 20 employees.');
   const ref = await addDoc(collection(db, 'open_shifts'), {
     shiftId: `OS-${Date.now().toString(36).toUpperCase()}`,
     rosterId: input.rosterId || null,
@@ -1167,11 +1172,42 @@ export async function createOpenShift(input: {
     hours: Math.round(hrs * 10) / 10,
     premiumRate: input.premiumRate || null,
     urgency: input.urgency || 'normal',
+    requestedCount: requested,
+    assignees: [],
     status: 'open',
     createdAt: nowIso(),
     createdBy: input.authorUid || user.uid,
   });
   return ref.id;
+}
+
+/**
+ * Manager removes a published open shift. This CANCELS it (status 'cancelled')
+ * rather than deleting the document, so the audit trail survives — Firestore
+ * rules do not permit delete on open_shifts and the claim history must stay
+ * explainable. Elapsed shifts are closed the same way.
+ */
+export async function cancelOpenShift(openShiftDocId: string, reason?: string) {
+  const user = requireAuth();
+  await requireManager('remove open shifts');
+  const ref = doc(db, 'open_shifts', openShiftDocId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Open shift not found.');
+    const data = snap.data() as Record<string, unknown>;
+    if (data.status === 'cancelled') throw new Error('This shift is already cancelled.');
+    tx.update(ref, {
+      status: 'cancelled',
+      cancelledAt: nowIso(),
+      cancelledBy: user.uid,
+      cancelReason: reason || null,
+      lastDecision: {
+        performedBy: user.uid, performedAt: nowIso(),
+        action: 'open_shift_cancelled', reason: reason || null,
+      },
+      updatedAt: nowIso(),
+    });
+  });
 }
 
 export function listenOpenShifts(cb: (items: OpenShift[]) => void, onlyOpen = false) {
@@ -1185,9 +1221,16 @@ export function listenOpenShifts(cb: (items: OpenShift[]) => void, onlyOpen = fa
 export function filterEligibleOpenShifts(args: {
   shifts: OpenShift[]; staffId: string; role: string; skill?: string;
   availability: StaffAvailability[]; weekHoursSoFar: number;
+  now?: number;
 }): OpenShift[] {
+  const now = args.now ?? Date.now();
   return args.shifts.filter((s) => {
     if (s.status !== 'open') return false;
+    // Elapsed shifts (date passed, or today and already finished) never show.
+    if (isOpenShiftElapsed(s, now)) return false;
+    // Fully-covered shifts are removed from the claimable board.
+    if (openShiftFill(s).complete) return false;
+    if (args.staffId && (s.assignees || []).includes(args.staffId)) return false;
     if (s.role && args.role && s.role !== args.role) return false;
     if (s.requiredSkill && args.skill && s.requiredSkill !== args.skill) return false;
     if (args.weekHoursSoFar + s.hours > 48) return false;
@@ -1261,7 +1304,19 @@ export async function claimOpenShift(args: { openShiftDocId: string; claimerUid?
       const snap = await tx.get(shiftRef);
       if (!snap.exists()) throw new Error('Open shift not found.');
       const data = snap.data() as Record<string, any>;
-      if (data.status !== 'open') throw new Error('This shift has already been claimed by another staff member.');
+      if (data.status !== 'open') throw new Error('This shift has already been fully claimed.');
+      if (isOpenShiftElapsed({ date: String(data.date || ''), endTime: String(data.endTime || '') }))
+        throw new Error('This shift has already elapsed and can no longer be claimed.');
+      // Slot accounting: requestedCount defaults to 1 (legacy docs), assignees
+      // carries every claimer. The last slot closes the shift automatically.
+      const requested = Math.max(1, Number(data.requestedCount) || 1);
+      const existing: string[] = Array.isArray(data.assignees) && data.assignees.length
+        ? (data.assignees as string[])
+        : data.claimedBy ? [String(data.claimedBy)] : [];
+      if (existing.includes(claimerUid)) throw new Error('You have already claimed this shift.');
+      if (existing.length >= requested) throw new Error('Every requested slot on this shift is taken.');
+      const assignees = [...existing, claimerUid];
+      const nowFull = assignees.length >= requested;
       let rosterShifts: RosterShift[] | null = null;
       const rosterRef = rosterId ? doc(db, 'shift_rosters', rosterId) : null;
       if (rosterRef) {
@@ -1271,8 +1326,16 @@ export async function claimOpenShift(args: { openShiftDocId: string; claimerUid?
         }
       }
       tx.update(shiftRef, {
-        status: 'filled', claimedBy: claimerUid, claimedAt: nowIso(), updatedAt: nowIso(),
-        lastDecision: { performedBy: claimerUid, performedAt: nowIso(), action: 'open_shift_claimed', reason: String(data.shiftId || '') },
+        // `claimedBy` stays the first claimer; `assignees` is the full roster.
+        status: nowFull ? 'filled' : 'open',
+        assignees,
+        ...(existing.length ? {} : { claimedBy: claimerUid, claimedAt: nowIso() }),
+        updatedAt: nowIso(),
+        lastDecision: {
+          performedBy: claimerUid, performedAt: nowIso(),
+          action: nowFull ? 'open_shift_claimed' : 'open_shift_slot_claimed',
+          reason: String(data.shiftId || ''),
+        },
       });
       if (rosterRef && rosterShifts) {
         // Never persist undefined (Firestore rejects it) — omit absent skill.
@@ -1297,11 +1360,34 @@ export async function claimOpenShift(args: { openShiftDocId: string; claimerUid?
     });
   } catch { /* best-effort */ }
   await notifyManagers({
-    type: 'open_shift_claimed', title: 'Open shift filled',
-    message: `${user.email} claimed an open shift.`,
+    type: 'open_shift_claimed', title: 'Open shift claimed',
+    message: `${user.email} claimed an open shift slot.`,
     referenceId: args.openShiftDocId,
     targetRoute: '/(kitchen)/open-shifts',
   });
+}
+
+/**
+ * Auto-close every open shift whose window has elapsed. Called by managers from
+ * the open-shift board so elapsed shifts leave the board with a recorded reason
+ * instead of lingering. Returns the ids it closed.
+ *
+ * This CANCELS rather than deletes: Firestore rules do not permit delete on
+ * open_shifts, and the claim history must stay auditable.
+ */
+export async function autoCloseElapsedOpenShifts(reason = 'Shift window elapsed without full cover') {
+  await requireManager('close elapsed open shifts');
+  const snap = await getDocs(collection(db, 'open_shifts'));
+  const now = Date.now();
+  const closed: string[] = [];
+  for (const d of snap.docs) {
+    const data = d.data() as Record<string, unknown>;
+    if (data.status !== 'open') continue;
+    if (!isOpenShiftElapsed({ date: String(data.date || ''), endTime: String(data.endTime || '') }, now)) continue;
+    await cancelOpenShift(d.id, reason);
+    closed.push(d.id);
+  }
+  return closed;
 }
 
 // ---------- UC45 + Ledger — roster-tied attendance exceptions ----------
